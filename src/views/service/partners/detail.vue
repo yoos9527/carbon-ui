@@ -386,12 +386,12 @@ async function removeAuth(auth: AuthConfig) {
                   </dd>
                 </div>
                 <div class="f">
-                  <dt class="f__k">连接超时</dt>
-                  <dd class="f__v num">{{ detail.connectTimeout }} ms</dd>
+                  <dt class="f__k">连接超时（ms）</dt>
+                  <dd class="f__v num">{{ detail.connectTimeout }}</dd>
                 </div>
                 <div class="f">
-                  <dt class="f__k">读取超时</dt>
-                  <dd class="f__v num">{{ detail.readTimeout }} ms</dd>
+                  <dt class="f__k">读取超时（ms）</dt>
+                  <dd class="f__v num">{{ detail.readTimeout }}</dd>
                 </div>
                 <div class="f">
                   <dt class="f__k">代理类型</dt>
@@ -438,28 +438,22 @@ async function removeAuth(auth: AuthConfig) {
                   <el-switch v-model="envForm.useProxy" />
                 </div>
                 <div class="f">
-                  <label class="f__k">连接超时</label>
-                  <div class="f__ctl">
-                    <el-input-number
-                      v-model="envForm.connectTimeout"
-                      :min="100"
-                      :step="500"
-                      controls-position="right"
-                    />
-                    <span class="unit">ms</span>
-                  </div>
+                  <label class="f__k">连接超时（ms）</label>
+                  <el-input-number
+                    v-model="envForm.connectTimeout"
+                    :min="100"
+                    :step="500"
+                    controls-position="right"
+                  />
                 </div>
                 <div class="f">
-                  <label class="f__k">读取超时</label>
-                  <div class="f__ctl">
-                    <el-input-number
-                      v-model="envForm.readTimeout"
-                      :min="100"
-                      :step="500"
-                      controls-position="right"
-                    />
-                    <span class="unit">ms</span>
-                  </div>
+                  <label class="f__k">读取超时（ms）</label>
+                  <el-input-number
+                    v-model="envForm.readTimeout"
+                    :min="100"
+                    :step="500"
+                    controls-position="right"
+                  />
                 </div>
                 <div class="f">
                   <label class="f__k">代理类型</label>
@@ -564,13 +558,13 @@ async function removeAuth(auth: AuthConfig) {
 
               <dl v-if="editingTab !== 'strategy'" class="grid grid--3">
                 <div class="f">
-                  <dt class="f__k">限流</dt>
-                  <dd class="f__v num">{{ detail.qps }} <i>QPS</i></dd>
+                  <dt class="f__k">限流（QPS）</dt>
+                  <dd class="f__v num">{{ detail.qps }}</dd>
                 </div>
                 <div class="f">
-                  <dt class="f__k">日调用上限</dt>
+                  <dt class="f__k">日调用上限（次）</dt>
                   <dd class="f__v num">
-                    {{ detail.dailyLimit.toLocaleString() }} <i>次</i>
+                    {{ detail.dailyLimit.toLocaleString() }}
                   </dd>
                 </div>
                 <div class="f">
@@ -578,33 +572,32 @@ async function removeAuth(auth: AuthConfig) {
                   <dd class="f__v num">{{ detail.concurrency }}</dd>
                 </div>
                 <div class="f">
-                  <dt class="f__k">失败重试</dt>
+                  <dt class="f__k">失败重试（次）</dt>
                   <dd class="f__v num">
-                    {{ detail.retryTimes }} <i>次</i>
+                    {{ detail.retryTimes }}
                   </dd>
                 </div>
                 <div class="f">
-                  <dt class="f__k">重试间隔</dt>
-                  <dd class="f__v num">{{ detail.retryInterval }} <i>ms</i></dd>
+                  <dt class="f__k">重试间隔（ms）</dt>
+                  <dd class="f__v num">{{ detail.retryInterval }}</dd>
                 </div>
                 <div class="f">
-                  <dt class="f__k">结果缓存</dt>
+                  <dt class="f__k">结果缓存（秒）</dt>
                   <dd class="f__v num">
                     {{ detail.cacheTtl ? detail.cacheTtl : "—" }}
-                    <i v-if="detail.cacheTtl">秒</i>
                   </dd>
                   <span v-if="!detail.cacheTtl" class="f__note">不缓存</span>
                 </div>
                 <div class="f">
-                  <dt class="f__k">熔断阈值</dt>
+                  <dt class="f__k">熔断阈值（次）</dt>
                   <dd class="f__v num">
-                    {{ detail.breakerThreshold }} <i>次</i>
+                    {{ detail.breakerThreshold }}
                   </dd>
                 </div>
                 <div class="f">
-                  <dt class="f__k">熔断恢复</dt>
+                  <dt class="f__k">熔断恢复（分钟）</dt>
                   <dd class="f__v num">
-                    {{ detail.breakerRecoverMin }} <i>分钟</i>
+                    {{ detail.breakerRecoverMin }}
                   </dd>
                 </div>
                 <div class="f">
@@ -615,27 +608,21 @@ async function removeAuth(auth: AuthConfig) {
 
               <form v-else-if="strategyForm" class="grid grid--3 grid--edit">
                 <div class="f">
-                  <label class="f__k">限流</label>
-                  <div class="f__ctl">
-                    <el-input-number
-                      v-model="strategyForm.qps"
-                      :min="1"
-                      controls-position="right"
-                    />
-                    <span class="unit">QPS</span>
-                  </div>
+                  <label class="f__k">限流（QPS）</label>
+                  <el-input-number
+                    v-model="strategyForm.qps"
+                    :min="1"
+                    controls-position="right"
+                  />
                 </div>
                 <div class="f">
-                  <label class="f__k">日调用上限</label>
-                  <div class="f__ctl">
-                    <el-input-number
-                      v-model="strategyForm.dailyLimit"
-                      :min="0"
-                      :step="1000"
-                      controls-position="right"
-                    />
-                    <span class="unit">次</span>
-                  </div>
+                  <label class="f__k">日调用上限（次）</label>
+                  <el-input-number
+                    v-model="strategyForm.dailyLimit"
+                    :min="0"
+                    :step="1000"
+                    controls-position="right"
+                  />
                 </div>
                 <div class="f">
                   <label class="f__k">并发数</label>
@@ -646,62 +633,47 @@ async function removeAuth(auth: AuthConfig) {
                   />
                 </div>
                 <div class="f">
-                  <label class="f__k">失败重试</label>
-                  <div class="f__ctl">
-                    <el-input-number
-                      v-model="strategyForm.retryTimes"
-                      :min="0"
-                      :max="5"
-                      controls-position="right"
-                    />
-                    <span class="unit">次</span>
-                  </div>
+                  <label class="f__k">失败重试（次）</label>
+                  <el-input-number
+                    v-model="strategyForm.retryTimes"
+                    :min="0"
+                    :max="5"
+                    controls-position="right"
+                  />
                 </div>
                 <div class="f">
-                  <label class="f__k">重试间隔</label>
-                  <div class="f__ctl">
-                    <el-input-number
-                      v-model="strategyForm.retryInterval"
-                      :min="0"
-                      :step="100"
-                      controls-position="right"
-                    />
-                    <span class="unit">ms</span>
-                  </div>
+                  <label class="f__k">重试间隔（ms）</label>
+                  <el-input-number
+                    v-model="strategyForm.retryInterval"
+                    :min="0"
+                    :step="100"
+                    controls-position="right"
+                  />
                 </div>
                 <div class="f">
-                  <label class="f__k">结果缓存</label>
-                  <div class="f__ctl">
-                    <el-input-number
-                      v-model="strategyForm.cacheTtl"
-                      :min="0"
-                      :step="60"
-                      controls-position="right"
-                    />
-                    <span class="unit">秒</span>
-                  </div>
+                  <label class="f__k">结果缓存（秒）</label>
+                  <el-input-number
+                    v-model="strategyForm.cacheTtl"
+                    :min="0"
+                    :step="60"
+                    controls-position="right"
+                  />
                 </div>
                 <div class="f">
-                  <label class="f__k">熔断阈值</label>
-                  <div class="f__ctl">
-                    <el-input-number
-                      v-model="strategyForm.breakerThreshold"
-                      :min="1"
-                      controls-position="right"
-                    />
-                    <span class="unit">次</span>
-                  </div>
+                  <label class="f__k">熔断阈值（次）</label>
+                  <el-input-number
+                    v-model="strategyForm.breakerThreshold"
+                    :min="1"
+                    controls-position="right"
+                  />
                 </div>
                 <div class="f">
-                  <label class="f__k">熔断恢复</label>
-                  <div class="f__ctl">
-                    <el-input-number
-                      v-model="strategyForm.breakerRecoverMin"
-                      :min="1"
-                      controls-position="right"
-                    />
-                    <span class="unit">分钟</span>
-                  </div>
+                  <label class="f__k">熔断恢复（分钟）</label>
+                  <el-input-number
+                    v-model="strategyForm.breakerRecoverMin"
+                    :min="1"
+                    controls-position="right"
+                  />
                 </div>
                 <div class="f">
                   <label class="f__k">告警接收人</label>
@@ -780,9 +752,9 @@ async function removeAuth(auth: AuthConfig) {
                   </dd>
                 </div>
                 <div class="f">
-                  <dt class="f__k">默认单价</dt>
+                  <dt class="f__k">默认单价（元/次）</dt>
                   <dd class="f__v num">
-                    {{ detail.unitPrice }} <i>元/次</i>
+                    {{ detail.unitPrice }}
                   </dd>
                 </div>
                 <div class="f">
@@ -804,19 +776,15 @@ async function removeAuth(auth: AuthConfig) {
                   <dd class="f__v num">{{ detail.quotaUsed.toLocaleString() }}</dd>
                 </div>
                 <div class="f">
-                  <dt class="f__k">剩余额度</dt>
-                  <dd class="f__v num">{{ remainQuota.toLocaleString() }}</dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">账户余额</dt>
+                  <dt class="f__k">预警阈值（%）</dt>
                   <dd class="f__v num">
-                    {{ detail.balance.toLocaleString() }} <i>元</i>
+                    {{ detail.warnThreshold }}
                   </dd>
                 </div>
                 <div class="f">
-                  <dt class="f__k">预警阈值</dt>
+                  <dt class="f__k">账户余额（元）</dt>
                   <dd class="f__v num">
-                    {{ detail.warnThreshold }} <i>%</i>
+                    {{ detail.balance.toLocaleString() }}
                   </dd>
                 </div>
                 <div class="f">
@@ -838,17 +806,14 @@ async function removeAuth(auth: AuthConfig) {
                   </el-select>
                 </div>
                 <div class="f">
-                  <label class="f__k">默认单价</label>
-                  <div class="f__ctl">
-                    <el-input-number
-                      v-model="billingForm.unitPrice"
-                      :min="0"
-                      :precision="2"
-                      :step="0.1"
-                      controls-position="right"
-                    />
-                    <span class="unit">元/次</span>
-                  </div>
+                  <label class="f__k">默认单价（元/次）</label>
+                  <el-input-number
+                    v-model="billingForm.unitPrice"
+                    :min="0"
+                    :precision="2"
+                    :step="0.1"
+                    controls-position="right"
+                  />
                 </div>
                 <div class="f">
                   <label class="f__k">结算周期</label>
@@ -880,29 +845,23 @@ async function removeAuth(auth: AuthConfig) {
                   />
                 </div>
                 <div class="f">
-                  <label class="f__k">预警阈值</label>
-                  <div class="f__ctl">
-                    <el-input-number
-                      v-model="billingForm.warnThreshold"
-                      :min="0"
-                      :max="100"
-                      controls-position="right"
-                    />
-                    <span class="unit">%</span>
-                  </div>
+                  <label class="f__k">预警阈值（%）</label>
+                  <el-input-number
+                    v-model="billingForm.warnThreshold"
+                    :min="0"
+                    :max="100"
+                    controls-position="right"
+                  />
                 </div>
                 <div class="f">
-                  <label class="f__k">账户余额</label>
-                  <div class="f__ctl">
-                    <el-input-number
-                      v-model="billingForm.balance"
-                      :min="0"
-                      :precision="2"
-                      :step="100"
-                      controls-position="right"
-                    />
-                    <span class="unit">元</span>
-                  </div>
+                  <label class="f__k">账户余额（元）</label>
+                  <el-input-number
+                    v-model="billingForm.balance"
+                    :min="0"
+                    :precision="2"
+                    :step="100"
+                    controls-position="right"
+                  />
                 </div>
                 <div class="f">
                   <label class="f__k">合同编号</label>
@@ -1323,22 +1282,19 @@ async function removeAuth(auth: AuthConfig) {
     font-size: 12px;
     color: var(--muted);
   }
+}
 
-  &__ctl {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+/* 编辑态：所有控件占满列宽，数字左对齐，避免各列宽度不一致 */
+.grid--edit .f {
+  :deep(.el-input-number),
+  :deep(.el-select),
+  :deep(.el-input) {
+    width: 100%;
   }
-}
 
-.grid--edit .f :deep(.el-input-number) {
-  width: 100%;
-}
-
-.unit {
-  flex: none;
-  font-size: 12px;
-  color: var(--muted);
+  :deep(.el-input-number .el-input__inner) {
+    text-align: left;
+  }
 }
 
 /* ------------------------------- 子区块 ------------------------------- */
