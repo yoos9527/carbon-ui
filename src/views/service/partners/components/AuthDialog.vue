@@ -45,8 +45,7 @@ const isOAuth2 = computed(() => form.value.authType === "oauth2");
 const isIpWhitelist = computed(() => form.value.authType === "ipWhitelist");
 const isMtls = computed(() => form.value.authType === "mtls");
 const isHmac = computed(
-  () =>
-    form.value.authType === "hmac" || form.value.authType === "appKeySecret"
+  () => form.value.authType === "hmac" || form.value.authType === "appKeySecret"
 );
 const needSecret = computed(() =>
   ["appKeySecret", "oauth2", "bearer", "hmac", "script"].includes(
@@ -144,16 +143,36 @@ function resetTemplate() {
 
 <template>
   <el-dialog
+    class="auth-dlg"
     :model-value="props.modelValue"
-    :title="props.editing ? '编辑鉴权' : '新增鉴权'"
-    width="820px"
+    width="900px"
     top="6vh"
     destroy-on-close
     @update:model-value="close"
   >
-    <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
-      <el-row :gutter="16">
-        <el-col :span="12">
+    <template #header>
+      <div class="dlg-head">
+        <div class="dlg-head__text">
+          <h2>{{ props.editing ? "编辑鉴权" : "新增鉴权" }}</h2>
+          <p>一个合作方可以配置多种鉴权方式，调用时按接口绑定关系选用</p>
+        </div>
+        <div class="dlg-head__state">
+          <span>启用</span>
+          <el-switch v-model="form.enabled" />
+        </div>
+      </div>
+    </template>
+
+    <el-form
+      ref="formRef"
+      :model="form"
+      :rules="rules"
+      label-position="top"
+      class="auth-form"
+    >
+      <section class="blk">
+        <div class="blk__t"><span>基本</span></div>
+        <div class="fg fg--2">
           <el-form-item label="鉴权名称" prop="name">
             <el-input
               v-model="form.name"
@@ -161,10 +180,8 @@ function resetTemplate() {
               maxlength="40"
             />
           </el-form-item>
-        </el-col>
-        <el-col :span="12">
           <el-form-item label="鉴权方式" prop="authType">
-            <el-select v-model="form.authType" class="w-full">
+            <el-select v-model="form.authType">
               <el-option
                 v-for="item in authTypeOptions"
                 :key="item.value"
@@ -173,16 +190,15 @@ function resetTemplate() {
               />
             </el-select>
           </el-form-item>
-        </el-col>
-      </el-row>
+        </div>
+      </section>
 
-      <el-row v-if="needAppKey" :gutter="16">
-        <el-col :span="12">
+      <section v-if="needAppKey" class="blk">
+        <div class="blk__t"><span>凭证</span></div>
+        <div class="fg fg--2">
           <el-form-item label="AppKey" prop="appKey">
             <el-input v-model="form.appKey" placeholder="合作方分配的 AppKey" />
           </el-form-item>
-        </el-col>
-        <el-col :span="12">
           <el-form-item label="AppSecret">
             <el-input
               v-model="form.appSecret"
@@ -195,13 +211,14 @@ function resetTemplate() {
               "
             />
           </el-form-item>
-        </el-col>
-      </el-row>
+        </div>
+      </section>
 
-      <el-row v-if="isHmac" :gutter="16">
-        <el-col :span="8">
+      <section v-if="isHmac" class="blk">
+        <div class="blk__t"><span>签名规则</span></div>
+        <div class="fg fg--3">
           <el-form-item label="签名算法">
-            <el-select v-model="form.signAlgorithm" class="w-full">
+            <el-select v-model="form.signAlgorithm">
               <el-option
                 v-for="item in signAlgorithmOptions"
                 :key="item.value"
@@ -210,149 +227,414 @@ function resetTemplate() {
               />
             </el-select>
           </el-form-item>
-        </el-col>
-        <el-col :span="8">
           <el-form-item label="时间戳单位">
-            <el-radio-group v-model="form.timestampUnit">
+            <el-radio-group v-model="form.timestampUnit" class="seg">
               <el-radio-button label="s">秒</el-radio-button>
               <el-radio-button label="ms">毫秒</el-radio-button>
             </el-radio-group>
           </el-form-item>
-        </el-col>
-        <el-col :span="8">
           <el-form-item label="签名规则">
             <el-input v-model="form.signRule" placeholder="appKey+ts+nonce" />
           </el-form-item>
-        </el-col>
-      </el-row>
+        </div>
+      </section>
 
-      <template v-if="isOAuth2">
-        <el-row :gutter="16">
-          <el-col :span="16">
-            <el-form-item label="Token 地址" prop="tokenUrl">
-              <el-input
-                v-model="form.tokenUrl"
-                placeholder="https://api.example.com/oauth/token"
+      <section v-if="isOAuth2" class="blk">
+        <div class="blk__t"><span>OAuth2</span></div>
+        <div class="fg fg--3">
+          <el-form-item label="Token 地址" prop="tokenUrl" class="span-2">
+            <el-input
+              v-model="form.tokenUrl"
+              placeholder="https://api.example.com/oauth/token"
+            />
+          </el-form-item>
+          <el-form-item label="授权模式">
+            <el-select v-model="form.grantType">
+              <el-option
+                label="client_credentials"
+                value="client_credentials"
               />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="授权模式">
-              <el-select v-model="form.grantType" class="w-full">
-                <el-option label="client_credentials" value="client_credentials" />
-                <el-option label="password" value="password" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="Token 有效期">
-          <el-input-number
-            v-model="form.tokenExpire"
-            :min="60"
-            :step="60"
-            controls-position="right"
+              <el-option label="password" value="password" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Token 有效期（秒）">
+            <el-input-number
+              v-model="form.tokenExpire"
+              :min="60"
+              :step="60"
+              controls-position="right"
+            />
+          </el-form-item>
+          <div class="fg__note span-2">
+            到期前 60 秒自动刷新，刷新失败时按调用策略重试
+          </div>
+        </div>
+      </section>
+
+      <section v-if="isIpWhitelist" class="blk">
+        <div class="blk__t"><span>IP 白名单</span></div>
+        <el-form-item prop="ipWhitelist" class="no-label">
+          <el-input
+            v-model="form.ipWhitelist"
+            type="textarea"
+            :rows="4"
+            placeholder="每行一个 IP 或网段，如 203.0.113.10"
           />
-          <span class="ml-2 text-xs text-gray-400">秒，到期前 60 秒自动刷新</span>
         </el-form-item>
-      </template>
+      </section>
 
-      <el-form-item v-if="isIpWhitelist" label="IP 白名单" prop="ipWhitelist">
-        <el-input
-          v-model="form.ipWhitelist"
-          type="textarea"
-          :rows="4"
-          placeholder="每行一个 IP 或网段，如 203.0.113.10"
-        />
-      </el-form-item>
+      <section v-if="isMtls" class="blk">
+        <div class="blk__t"><span>双向证书</span></div>
+        <el-form-item label="客户端证书" prop="certName">
+          <el-input
+            v-model="form.certName"
+            placeholder="如 beidou-client.p12"
+          />
+        </el-form-item>
+      </section>
 
-      <el-form-item v-if="isMtls" label="客户端证书" prop="certName">
-        <el-input v-model="form.certName" placeholder="如 beidou-client.p12" />
-      </el-form-item>
+      <section v-if="isScript" class="blk blk--script">
+        <div class="blk__t">
+          <span>签名脚本</span>
+          <em class="chip chip--code">Groovy</em>
+          <div class="blk__ops">
+            <el-button link type="primary" @click="resetTemplate">
+              恢复模板
+            </el-button>
+            <el-button link type="primary" @click="checkScript">
+              测试运行
+            </el-button>
+          </div>
+        </div>
+        <el-form-item prop="scriptCode" class="no-label">
+          <CodeEditor v-model="scriptCode" height="340px" />
+        </el-form-item>
+        <div class="fg fg--2">
+          <el-form-item label="执行超时（ms）">
+            <el-input-number
+              v-model="form.scriptTimeout"
+              :min="100"
+              :max="30000"
+              :step="100"
+              controls-position="right"
+            />
+          </el-form-item>
+          <el-form-item label="脚本版本">
+            <el-input-number
+              v-model="form.scriptVersion"
+              :min="1"
+              controls-position="right"
+            />
+          </el-form-item>
+        </div>
 
-      <template v-if="isScript">
-        <el-form-item label="脚本语言">
-          <el-tag type="warning" effect="plain">Groovy</el-tag>
-          <span class="ml-2 text-xs text-gray-400">
-            服务端 GroovyShell 沙箱执行，语言固定不可切换
-          </span>
-        </el-form-item>
-        <el-form-item label="脚本内容" prop="scriptCode">
-          <CodeEditor v-model="scriptCode" height="360px" />
-        </el-form-item>
-        <el-row :gutter="16">
-          <el-col :span="12">
-            <el-form-item label="执行超时">
-              <el-input-number
-                v-model="form.scriptTimeout"
-                :min="100"
-                :max="30000"
-                :step="100"
-                controls-position="right"
-              />
-              <span class="ml-2 text-xs text-gray-400">ms</span>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="脚本版本">
-              <el-input-number
-                v-model="form.scriptVersion"
-                :min="1"
-                controls-position="right"
-              />
-              <span class="ml-2 text-xs text-gray-400">
-                保存后自增，保留最近 5 个版本
-              </span>
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="操作">
-          <el-button @click="checkScript">测试运行</el-button>
-          <el-button @click="resetTemplate">恢复模板</el-button>
-        </el-form-item>
-        <el-form-item label="可用 API">
-          <el-collapse class="w-full">
-            <el-collapse-item title="ctx 上下文与 ctx.lib 工具函数" name="ctx">
-              <el-table :data="ctxFields" border size="small">
-                <el-table-column prop="name" label="字段" width="150" />
-                <el-table-column prop="desc" label="说明" min-width="260" />
-              </el-table>
-              <div class="mt-2 text-xs leading-6 text-gray-500">
-                Groovy 可直接调用 JDK 类，例如
-                <code>javax.crypto.Mac</code>、<code>java.security.MessageDigest</code>；
-                支持 GString 插值 <code>"${appKey}${ts}"</code>。 脚本运行在服务端
-                Groovy 沙箱：ImportCustomizer 白名单 java.security / javax.crypto /
-                java.util / java.time / org.apache.commons.codec，SecureASTCustomizer
-                禁止文件、网络与进程操作；appSecret 由服务端注入，前端仅显示掩码。
-                返回
-                <code>[headers: [...], query: [...], body: ...]</code>
-                会合并进实际请求；抛异常或返回 <code>[error: "…"]</code> 判定鉴权失败。
+        <el-collapse class="api">
+          <el-collapse-item name="ctx">
+            <template #title>
+              <span class="api__title">可用 API 与沙箱限制</span>
+            </template>
+            <div class="api__grid">
+              <div
+                v-for="field in ctxFields"
+                :key="field.name"
+                class="api__row"
+              >
+                <code>{{ field.name }}</code>
+                <span>{{ field.desc }}</span>
               </div>
-            </el-collapse-item>
-          </el-collapse>
-        </el-form-item>
-      </template>
-
-      <el-form-item label="启用">
-        <el-switch v-model="form.enabled" />
-      </el-form-item>
+            </div>
+            <div class="api__note">
+              Groovy 可直接调用 JDK 类，例如
+              <code>javax.crypto.Mac</code
+              >、<code>java.security.MessageDigest</code>；支持 GString 插值
+              <code>"${appKey}${ts}"</code>。 脚本运行在服务端 GroovyShell
+              沙箱：ImportCustomizer 白名单 java.security / javax.crypto /
+              java.util / java.time /
+              org.apache.commons.codec，SecureASTCustomizer
+              禁止文件、网络与进程操作；appSecret
+              由服务端注入，前端仅显示掩码。返回
+              <code>[headers: [...], query: [...], body: ...]</code>
+              会合并进实际请求；抛异常或返回
+              <code>[error: "…"]</code> 判定鉴权失败。
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </section>
     </el-form>
 
     <template #footer>
-      <el-button @click="close">取消</el-button>
-      <el-button type="primary" @click="handleSubmit">保存</el-button>
+      <div class="dlg-foot">
+        <span class="hint">保存后立即生效，仅影响后续发起的调用</span>
+        <div class="dlg-foot__ops">
+          <el-button @click="close">取消</el-button>
+          <el-button type="primary" @click="handleSubmit">保存</el-button>
+        </div>
+      </div>
     </template>
   </el-dialog>
 </template>
 
 <style scoped lang="scss">
-.w-full {
-  width: 100%;
+/* 弹窗外壳：el-dialog 内部节点不带 scope id（且未 teleport），只能用 :global 命中本组件专属的 .auth-dlg */
+:global(.auth-dlg) {
+  --ink: #16233a;
+  --ink-2: #46536e;
+  --muted: #8792a8;
+  --line: #e6eaf2;
+  --line-soft: #eef1f7;
+
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+:global(.auth-dlg .el-dialog__header) {
+  padding: 20px 24px 16px;
+  margin-right: 0;
+  border-bottom: 1px solid #eef1f7;
+}
+
+:global(.auth-dlg .el-dialog__body) {
+  max-height: 66vh;
+  padding: 4px 24px 8px;
+  overflow-y: auto;
+}
+
+:global(.auth-dlg .el-dialog__headerbtn) {
+  top: 18px;
+  right: 16px;
+}
+
+:global(.auth-dlg .el-dialog__footer) {
+  padding: 14px 24px;
+  background: #fafbfd;
+  border-top: 1px solid #eef1f7;
+}
+
+/* ------------------------------- 标题区 ------------------------------- */
+.dlg-head {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-right: 24px;
+
+  &__text {
+    h2 {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 600;
+      color: var(--ink);
+      letter-spacing: 0.01em;
+    }
+
+    p {
+      margin: 6px 0 0;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+  }
+
+  &__state {
+    display: flex;
+    flex: none;
+    gap: 8px;
+    align-items: center;
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+}
+
+/* ------------------------------- 表单区 ------------------------------- */
+.auth-form {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.blk {
+  padding: 16px 0 4px;
+
+  & + & {
+    border-top: 1px solid var(--line-soft);
+  }
+
+  &__t {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+
+    > span {
+      flex: none;
+    }
+  }
+
+  &__ops {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+  }
+}
+
+.chip {
+  flex: none;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 18px;
+  border-radius: 4px;
+
+  &--code {
+    color: var(--el-color-warning-dark-2);
+    background: var(--el-color-warning-light-9);
+    border: 1px solid var(--el-color-warning-light-7);
+  }
+}
+
+.fg {
+  display: grid;
+  gap: 4px 20px;
+
+  &--2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  &--3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .span-2 {
+    grid-column: span 2;
+  }
+
+  &__note {
+    align-self: center;
+    padding-top: 2px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+}
+
+.auth-form :deep(.el-form-item) {
+  margin-bottom: 14px;
+
+  .el-form-item__label {
+    padding: 0 0 5px;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--muted);
+  }
+
+  .el-form-item__error {
+    padding-top: 3px;
+    font-size: 11px;
+  }
+
+  .el-input,
+  .el-input-number,
+  .el-select,
+  .el-textarea {
+    width: 100%;
+  }
+
+  .el-input-number .el-input__inner {
+    text-align: left;
+  }
+}
+
+.auth-form :deep(.el-form-item.no-label) .el-form-item__content {
+  margin-left: 0 !important;
+}
+
+.auth-form :deep(.el-textarea__inner) {
+  font-family: inherit;
+  line-height: 1.7;
+}
+
+.seg :deep(.el-radio-button__inner) {
+  font-size: 12px;
+}
+
+/* ------------------------------- 脚本区 ------------------------------- */
+.blk--script {
+  .chip--code {
+    margin-right: auto;
+  }
+}
+
+.api {
+  margin-top: 2px;
+  border-top: 1px dashed var(--line);
+
+  &__title {
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+
+  &__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+    gap: 8px 16px;
+    padding-bottom: 12px;
+  }
+
+  &__row {
+    display: grid;
+    grid-template-columns: subgrid;
+    grid-column: span 2;
+    font-size: 12px;
+    color: var(--ink-2);
+
+    code {
+      padding: 0;
+      color: var(--ink);
+      background: transparent;
+    }
+
+    > span {
+      color: var(--muted);
+    }
+  }
+
+  &__note {
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--muted);
+    background: #fafbfd;
+    border: 1px solid var(--line-soft);
+    border-radius: 6px;
+  }
 }
 
 code {
   padding: 1px 4px;
-  font-family: Consolas, Monaco, "Courier New", monospace;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
   background: var(--el-fill-color-light);
   border-radius: 3px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ------------------------------- 底部条 ------------------------------- */
+.dlg-foot {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+
+  &__ops {
+    display: flex;
+    gap: 8px;
+  }
 }
 </style>
