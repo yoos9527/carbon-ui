@@ -3,7 +3,8 @@ export default {
   redirect: "/error/403",
   meta: {
     icon: "ri/information-line",
-    // showLink: false,
+    // 不在左侧菜单展示，路由本身保留：/error/403、/error/404、/error/500 仍可直接访问
+    showLink: false,
     title: "异常页面",
     rank: 9
   },
