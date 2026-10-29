@@ -30,6 +30,27 @@ export default [
       showLink: false
     }
   },
+  // 业务详情页（不在菜单中，由列表页点击行跳入）
+  {
+    path: "/service/partners/detail",
+    component: Layout,
+    // 父级标题不能与子级相同：SidebarBreadCrumb.vue 会把「子级 title 与父级相同」的父级从面包屑里剔除
+    meta: {
+      title: "服务管理",
+      showLink: false
+    },
+    children: [
+      {
+        path: "/service/partners/detail/:id",
+        name: "ServicePartnerDetail",
+        component: () => import("@/views/service/partners/detail.vue"),
+        meta: {
+          title: "合作方详情",
+          showLink: false
+        }
+      }
+    ]
+  },
   {
     path: "/redirect",
     component: Layout,

@@ -31,6 +31,10 @@ const getBreadcrumb = (): void => {
     currentRoute = findRouteByPath(router.currentRoute.value.path, routes);
   }
 
+  // 兜底：带 params/query 的页面（如详情页）在 multiTags 里找不到对应标签时，
+  // currentRoute 会一直是 undefined，导致面包屑里丢掉当前页，只剩父级。
+  if (!currentRoute) currentRoute = toRaw(router.currentRoute.value);
+
   // 当前路由的父级路径组成的数组
   const parentRoutes = getParentPaths(
     router.currentRoute.value.name as string,

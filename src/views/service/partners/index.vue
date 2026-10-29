@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, reactive } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type FormInstance } from "element-plus";
+import { mockPartners, type PartnerItem } from "./data";
 import { PureTableBar } from "@/components/RePureTableBar";
 import SearchIcon from "~icons/ri/search-line";
 import RefreshIcon from "~icons/ri/refresh-line";
@@ -11,19 +13,9 @@ import DeleteIcon from "~icons/ri/delete-bin-line";
 /** 组件 name 必须与路由 name 一致，否则标签页缓存（keepAlive）失效 */
 defineOptions({ name: "ServicePartners" });
 
-/** 合作方数据模型，字段需与后端接口对齐 */
-interface PartnerItem {
-  id: number;
-  name: string;
-  code: string;
-  contact: string;
-  phone: string;
-  status: 0 | 1;
-  createTime: string;
-}
-
 type PartnerForm = Omit<PartnerItem, "id" | "createTime">;
 
+const router = useRouter();
 const loading = ref(false);
 const dataList = ref<PartnerItem[]>([]);
 
@@ -45,6 +37,7 @@ const columns: TableColumnList = [
     label: "名称",
     prop: "name",
     minWidth: 200,
+    slot: "name",
     showOverflowTooltip: true
   },
   { label: "编码", prop: "code", minWidth: 120 },
@@ -56,58 +49,11 @@ const columns: TableColumnList = [
 ];
 
 /**
- * TODO: 接后端时把本文件里的 mockPartners / loadData 换成真实接口，例如
+ * TODO: 接后端时把本文件里的 loadData 换成真实接口，例如
  *   import { getPartnerList } from "@/api/service";
  *   const { data } = await getPartnerList({ ...queryForm, ...pagination });
+ * 数据源现统一放在 ./data.ts，列表页与详情页共用。
  */
-const mockPartners: PartnerItem[] = [
-  {
-    id: 1,
-    name: "中科数据科技有限公司",
-    code: "PT-0001",
-    contact: "张伟",
-    phone: "13800001234",
-    status: 1,
-    createTime: "2026-01-08 09:12:00"
-  },
-  {
-    id: 2,
-    name: "华东云计算服务中心",
-    code: "PT-0002",
-    contact: "李静",
-    phone: "13900002345",
-    status: 1,
-    createTime: "2026-01-15 14:30:00"
-  },
-  {
-    id: 3,
-    name: "南方电子档案服务商",
-    code: "PT-0003",
-    contact: "王强",
-    phone: "13700003456",
-    status: 0,
-    createTime: "2026-02-02 10:05:00"
-  },
-  {
-    id: 4,
-    name: "北方工业互联网平台",
-    code: "PT-0004",
-    contact: "赵敏",
-    phone: "13600004567",
-    status: 1,
-    createTime: "2026-02-19 16:48:00"
-  },
-  {
-    id: 5,
-    name: "西南政务数据运营方",
-    code: "PT-0005",
-    contact: "陈刚",
-    phone: "13500005678",
-    status: 1,
-    createTime: "2026-03-04 08:21:00"
-  }
-];
-
 function loadData() {
   loading.value = true;
   const keyword = queryForm.name.trim();
@@ -142,6 +88,17 @@ function handleSizeChange(val: number) {
 function handleCurrentChange(val: number) {
   pagination.currentPage = val;
   loadData();
+}
+
+/** 进入合作方详情子页面 */
+function goDetail(row: PartnerItem) {
+  router.push(`/service/partners/detail/${row.id}`);
+}
+
+/** 整行可点：避开勾选列与操作列，避免误触 */
+function handleRowClick(row: PartnerItem, column: { type?: string }) {
+  if (column?.type === "selection") return;
+  goDetail(row);
 }
 
 const dialogVisible = ref(false);
@@ -298,9 +255,20 @@ loadData();
           :columns="dynamicColumns"
           :pagination="pagination"
           :loading="loading"
+          :row-style="{ cursor: 'pointer' }"
+          @row-click="handleRowClick"
           @page-size-change="handleSizeChange"
           @page-current-change="handleCurrentChange"
         >
+          <template #name="{ row }">
+            <el-link
+              type="primary"
+              :underline="false"
+              @click.stop="goDetail(row)"
+            >
+              {{ row.name }}
+            </el-link>
+          </template>
           <template #status="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'info'">
               {{ row.status === 1 ? "启用" : "停用" }}
@@ -311,7 +279,7 @@ loadData();
               link
               type="primary"
               :icon="EditIcon"
-              @click="handleEdit(row)"
+              @click.stop="handleEdit(row)"
             >
               编辑
             </el-button>
@@ -319,7 +287,7 @@ loadData();
               link
               type="danger"
               :icon="DeleteIcon"
-              @click="handleDelete(row)"
+              @click.stop="handleDelete(row)"
             >
               删除
             </el-button>
