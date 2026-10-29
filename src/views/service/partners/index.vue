@@ -2,7 +2,13 @@
 import { ref, reactive } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type FormInstance } from "element-plus";
-import { mockPartners, type PartnerItem } from "./data";
+import {
+  createEmptyPartner,
+  getPartnerTypeLabel,
+  getStatusOption,
+  mockPartners,
+  type PartnerItem
+} from "./data";
 import { PureTableBar } from "@/components/RePureTableBar";
 import SearchIcon from "~icons/ri/search-line";
 import RefreshIcon from "~icons/ri/refresh-line";
@@ -13,7 +19,10 @@ import DeleteIcon from "~icons/ri/delete-bin-line";
 /** 组件 name 必须与路由 name 一致，否则标签页缓存（keepAlive）失效 */
 defineOptions({ name: "ServicePartners" });
 
-type PartnerForm = Omit<PartnerItem, "id" | "createTime">;
+type PartnerForm = Pick<
+  PartnerItem,
+  "name" | "code" | "contact" | "phone" | "status"
+>;
 
 const router = useRouter();
 const loading = ref(false);
@@ -41,8 +50,10 @@ const columns: TableColumnList = [
     showOverflowTooltip: true
   },
   { label: "编码", prop: "code", minWidth: 120 },
+  { label: "类型", prop: "types", minWidth: 160, slot: "types" },
   { label: "联系人", prop: "contact", minWidth: 110 },
   { label: "联系电话", prop: "phone", minWidth: 140 },
+  { label: "接口数", prop: "interfaces", minWidth: 100, slot: "interfaceCount" },
   { label: "状态", prop: "status", minWidth: 100, slot: "status" },
   { label: "创建时间", prop: "createTime", minWidth: 170 },
   { label: "操作", fixed: "right", width: 150, slot: "operation" }
@@ -176,6 +187,7 @@ async function submitForm() {
   // TODO: 换成真实新增/编辑接口
   if (editingId.value === null) {
     mockPartners.unshift({
+      ...createEmptyPartner(),
       ...form,
       id: Math.max(0, ...mockPartners.map(item => item.id)) + 1,
       createTime: new Date().toLocaleString("zh-CN", { hour12: false })
@@ -219,6 +231,7 @@ loadData();
           style="width: 120px"
         >
           <el-option label="启用" :value="1" />
+          <el-option label="测试中" :value="2" />
           <el-option label="停用" :value="0" />
         </el-select>
       </el-form-item>
@@ -269,9 +282,24 @@ loadData();
               {{ row.name }}
             </el-link>
           </template>
+          <template #types="{ row }">
+            <el-tag
+              v-for="type in row.types"
+              :key="type"
+              size="small"
+              effect="plain"
+              class="mr-1"
+            >
+              {{ getPartnerTypeLabel(type) }}
+            </el-tag>
+            <span v-if="!row.types?.length">-</span>
+          </template>
+          <template #interfaceCount="{ row }">
+            {{ row.interfaces?.length ?? 0 }}
+          </template>
           <template #status="{ row }">
-            <el-tag :type="row.status === 1 ? 'success' : 'info'">
-              {{ row.status === 1 ? "启用" : "停用" }}
+            <el-tag :type="getStatusOption(row.status)?.tagType">
+              {{ getStatusOption(row.status)?.label }}
             </el-tag>
           </template>
           <template #operation="{ row }">
