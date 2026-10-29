@@ -41,7 +41,7 @@ const pagination = reactive({
 
 const columns: TableColumnList = [
   { type: "selection", width: 55, align: "left" },
-  { label: "合作方名称", prop: "name", minWidth: 180 },
+  { label: "名称", prop: "name", minWidth: 160, showOverflowTooltip: true },
   { label: "编码", prop: "code", width: 140 },
   { label: "联系人", prop: "contact", width: 120 },
   { label: "联系电话", prop: "phone", width: 150 },
@@ -234,13 +234,18 @@ loadData();
 
 <template>
   <div class="main">
-    <el-form :inline="true" :model="queryForm" class="search-form">
-      <el-form-item label="合作方名称">
+    <el-form
+      :inline="true"
+      :model="queryForm"
+      label-width="60px"
+      class="search-form"
+    >
+      <el-form-item label="名称">
         <el-input
           v-model="queryForm.name"
           placeholder="请输入合作方名称"
           clearable
-          class="w-56!"
+          style="width: 200px"
           @keyup.enter="onSearch"
         />
       </el-form-item>
@@ -249,7 +254,7 @@ loadData();
           v-model="queryForm.status"
           placeholder="全部"
           clearable
-          class="w-32!"
+          style="width: 120px"
         >
           <el-option label="启用" :value="1" />
           <el-option label="停用" :value="0" />
@@ -267,7 +272,8 @@ loadData();
       </el-form-item>
     </el-form>
 
-    <PureTableBar title="合作方列表" :columns="columns" @refresh="onSearch">
+    <PureTableBar :columns="columns" @refresh="onSearch">
+      <template #title><span /></template>
       <template #buttons>
         <el-button type="primary" @click="handleAdd">
           <template #icon><AddIcon /></template>
