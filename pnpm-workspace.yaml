@@ -1,0 +1,36 @@
+# pnpm 12 起，依赖/安装类设置只从这里读取（package.json 的 pnpm 字段与 .npmrc 里的同名项会被忽略）
+packages:
+  - "."
+
+# 允许执行构建脚本的依赖（pnpm 12 默认全部禁止，会导致 esbuild 二进制缺失）
+allowBuilds:
+  "@parcel/watcher": true
+  core-js: true
+  es5-ext: true
+  esbuild: true
+  typeit: true
+  vue-demi: true
+
+ignoredBuiltDependencies:
+  - "@tailwindcss/oxide"
+
+# 上游依赖了大量隐式提升的包（如 vue-tippy → tippy.js），必须保持扁平结构
+shamefullyHoist: true
+# 让 `VAR=x cmd` 形式的 npm script 在 Windows 下也能执行
+shellEmulator: true
+enablePrePostScripts: false
+strictPeerDependencies: false
+
+allowedDeprecatedVersions:
+  are-we-there-yet: "*"
+  sourcemap-codec: "*"
+  lodash.isequal: "*"
+  domexception: "*"
+  w3c-hr-time: "*"
+  inflight: "*"
+  npmlog: "*"
+  rimraf: "*"
+  stable: "*"
+  gauge: "*"
+  abab: "*"
+  glob: "*"

@@ -8,16 +8,16 @@
 
 ## 技术栈
 
-| 项 | 版本 |
-| --- | --- |
-| vue | ^3.5.22 |
-| vite | ^7.1.12 |
-| vue-router | ^4.6.3 |
-| pinia | ^3.0.3 |
-| element-plus | ^2.11.5 |
-| tailwindcss | ^4.1.16 |
-| typescript | ^5.9.3 |
-| node / pnpm | `^20.19.0 \|\| >=22.13.0` / `>=9`（仓库自带 `.nvmrc`） |
+| 项           | 版本                                                   |
+| ------------ | ------------------------------------------------------ |
+| vue          | ^3.5.22                                                |
+| vite         | ^7.1.12                                                |
+| vue-router   | ^4.6.3                                                 |
+| pinia        | ^3.0.3                                                 |
+| element-plus | ^2.11.5                                                |
+| tailwindcss  | ^4.1.16                                                |
+| typescript   | ^5.9.3                                                 |
+| node / pnpm  | `^20.19.0 \|\| >=22.13.0` / `>=9`（仓库自带 `.nvmrc`） |
 
 > 刻意**不跟**完整版 vue-pure-admin 的 vite 8 / TS 6 / vue-router 5 / pinia 4，那边是 Rolldown 新管线，生态与社区资料都还没跟上。
 
@@ -71,11 +71,44 @@ build/            vite 插件、cdn、压缩、optimize 配置
 3. `src/store/modules/user.ts` — `loginByUsername`，登录后 store 落盘逻辑。
 4. `src/utils/http/index.ts` — 请求拦截已注入 `Authorization`；**响应拦截只 `return response.data`，没有统一业务码处理**，业务错误上报要在这里补。
 
-菜单树字段：`path`、`name`、`component`、`parentId`、`meta`。`component` 通过 `import.meta.glob("/src/views/**/*.{vue,tsx}")` 映射，写相对 `views` 的路径即可。
+菜单树字段：`path`、`name`、`component`、`parentId`、`meta`。`component` 通过 `import.meta.glob("/src/views/**/*.{vue,tsx}")` 映射，写相对 `views` 的路径即可（不带扩展名）。
+
+后端菜单接口返回示例：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "path": "/system",
+      "meta": { "title": "系统管理", "icon": "ep:setting", "rank": 10 },
+      "children": [
+        {
+          "path": "/system/user/index",
+          "name": "SystemUser",
+          "component": "system/user/index",
+          "meta": {
+            "title": "用户管理",
+            "roles": ["admin"],
+            "keepAlive": true,
+            "auths": ["system:user:add", "system:user:delete"]
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+- `roles`：路由级可见性（在 `src/router/utils.ts` 的 `filterNoPermissionTree` 里过滤）。
+- `auths`：写入 `meta.auths` 后由 `v-auth` / `v-perms` 消费；另一种来源是登录接口返回的 `permissions[]`。
+- `component` 缺省的节点会被当作目录（菜单分组）。
 
 ## 上线前必做
 
 - [ ] 关掉/剥离 `mock/`（dev 专属，但部分演示页会直连 mock 路径）
 - [ ] `.env.production` 确认 `VITE_ROUTER_HISTORY`（hash ↔ h5 需服务端 fallback）、`VITE_CDN`、`VITE_COMPRESSION`
+- [ ] 注意 `build/plugins.ts` 里 `vitePluginFakeServer` 的 `enableProd` 已被改为 `false`（上游默认 `true`，会把 mock 打进生产包），若有人改回去需重新审。
 - [ ] `public/platform-config.json` 改 `Title`、`EpThemeColor`、`Locale` 等
 - [ ] 权限变更后清 localStorage 的 `async-routes`（当 `CachingAsyncRoutes: true` 时菜单会被缓存）

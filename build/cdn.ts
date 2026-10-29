@@ -19,17 +19,9 @@ export const cdn = importToCDN({
       var: "VueRouter",
       path: "vue-router.global.min.js"
     },
-    // 项目中没有直接安装vue-demi，但是pinia用到了，所以需要在引入pinia前引入vue-demi（https://github.com/vuejs/pinia/blob/v2/packages/pinia/package.json#L77）
-    {
-      name: "vue-demi",
-      var: "VueDemi",
-      path: "index.iife.min.js"
-    },
-    {
-      name: "pinia",
-      var: "Pinia",
-      path: "pinia.iife.min.js"
-    },
+    // 注意：pinia v3 起不再依赖 vue-demi，且其 iife 产物存在兼容问题（上游 vue-pure-admin v7 也已移除），
+    // 因此这里不再把 vue-demi / pinia 走 CDN，随包打包即可。
+    // （vite-plugin-cdn-import 会在加载配置时读取每个 module 的 package.json，缺少依赖会直接抛错）
     {
       name: "element-plus",
       var: "ElementPlus",
