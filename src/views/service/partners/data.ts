@@ -16,16 +16,8 @@ export type ProviderType =
   | "sms"
   | "other";
 
-/** 鉴权方式，script = 自定义 Groovy 脚本 */
-export type AuthType =
-  | "apiKey"
-  | "appKeySecret"
-  | "oauth2"
-  | "bearer"
-  | "hmac"
-  | "ipWhitelist"
-  | "mtls"
-  | "script";
+/** 鉴权方式：header = 公共请求头（原环境与网络里的公共请求头迁入）；script = 自定义 Groovy 脚本 */
+export type AuthType = "header" | "script";
 
 /** 合作方状态：0 停用 1 启用 2 测试中 */
 export type PartnerStatus = 0 | 1 | 2;
@@ -33,23 +25,12 @@ export type PartnerStatus = 0 | 1 | 2;
 /** 一条鉴权配置，同一个合作方下可以配置多条 */
 export interface AuthConfig {
   id: number;
-  /** 鉴权名称，如「主账号」「备用账号」「复杂签名脚本」 */
+  /** 鉴权名称，如「公共请求头」「复杂签名脚本」 */
   name: string;
   authType: AuthType;
-  appKey?: string;
-  appSecret?: string;
-  /** HMAC 签名专用 */
-  signAlgorithm?: "md5" | "sha256" | "hmacSha256" | "rsa2";
-  signRule?: string;
-  timestampUnit?: "s" | "ms";
-  /** OAuth2 专用 */
-  tokenUrl?: string;
-  grantType?: string;
-  tokenExpire?: number;
-  ipWhitelist?: string;
-  /** mTLS 证书文件名 */
-  certName?: string;
-  /** 脚本鉴权专用，语言固定 Groovy */
+  /** header 类型：随每次请求发送的请求头列表 */
+  headers?: KV[];
+  /** script 类型专用，语言固定 Groovy */
   scriptLang?: "groovy";
   scriptCode?: string;
   scriptTimeout?: number;
@@ -68,7 +49,7 @@ export interface PartnerInterfaceItem {
   payloadFormat: "json" | "xml" | "form";
   /** 引用 AuthConfig.id */
   authId?: number;
-  /** 覆盖 / 追加合作方公共请求头 */
+  /** 覆盖 / 追加鉴权配置里的请求头 */
   extraHeaders: KV[];
   /** 接口独有请求参数 */
   extraParams: KV[];
@@ -104,7 +85,6 @@ export interface PartnerItem {
   charset: string;
   connectTimeout: number;
   readTimeout: number;
-  commonHeaders: KV[];
   useProxy: boolean;
   proxyType?: "http" | "socks5";
   proxyUrl?: string;
@@ -164,21 +144,8 @@ export const partnerStatusOptions: {
 ];
 
 export const authTypeOptions: { label: string; value: AuthType }[] = [
-  { label: "API Key", value: "apiKey" },
-  { label: "AppKey + Secret", value: "appKeySecret" },
-  { label: "OAuth2", value: "oauth2" },
-  { label: "Bearer Token", value: "bearer" },
-  { label: "HMAC 签名", value: "hmac" },
-  { label: "IP 白名单", value: "ipWhitelist" },
-  { label: "双向证书 (mTLS)", value: "mtls" },
-  { label: "脚本代码 (Groovy)", value: "script" }
-];
-
-export const signAlgorithmOptions = [
-  { label: "MD5", value: "md5" },
-  { label: "SHA256", value: "sha256" },
-  { label: "HMAC-SHA256", value: "hmacSha256" },
-  { label: "RSA2", value: "rsa2" }
+  { label: "公共请求头", value: "header" },
+  { label: "Groovy 脚本", value: "script" }
 ];
 
 export const methodOptions = [
@@ -220,22 +187,24 @@ export function getPartnerTypeLabel(type: ProviderType): string {
 
 /** 新建「脚本代码」鉴权时的初始模板 */
 export const groovyScriptTemplate = `/**
- * 鉴权脚本：服务端 Groovy 沙箱内执行，appSecret 由服务端注入
+ * 鉴权脚本：服务端 Groovy 沙箱内执行
  *
  * ctx.url        完整请求地址
  * ctx.method     GET / POST
- * ctx.headers    已合并的公共请求头（mutable Map）
+ * ctx.headers    当前请求头（mutable Map，可直接改写）
  * ctx.query      查询参数（mutable Map）
  * ctx.body       请求体
- * ctx.config     当前鉴权配置：appKey / appSecret / 其它自定义键
+ * ctx.config     预留的自定义键值（可选）
  * ctx.lib        md5(str) sha256(str) hmacSha256(str, key) base64(str) uuid() timestamp() json(obj)
  *
  * 返回 [headers: [...], query: [...], body: ...]，会合并进实际请求
  * 抛异常或返回 [error: "..."] 表示鉴权失败
  */
 def sign(ctx) {
-    def appKey = ctx.config.appKey
-    def appSecret = ctx.config.appSecret
+    // 合作方分配的凭证，直接写在这里（随配置加密存储）
+    def appKey = "your-app-key"
+    def appSecret = "your-app-secret"
+
     def ts = ctx.lib.timestamp()
     def nonce = ctx.lib.uuid()
     def signature = ctx.lib.hmacSha256(appKey + ts + nonce, appSecret)
@@ -263,12 +232,8 @@ export function createEmptyAuth(): AuthConfig {
   return {
     id: nextId(),
     name: "",
-    authType: "appKeySecret",
-    appKey: "",
-    appSecret: "",
-    signAlgorithm: "hmacSha256",
-    signRule: "",
-    timestampUnit: "s",
+    authType: "header",
+    headers: [],
     enabled: true
   };
 }
@@ -302,7 +267,6 @@ export function createEmptyPartner(): PartnerItem {
     charset: "UTF-8",
     connectTimeout: 3000,
     readTimeout: 5000,
-    commonHeaders: [],
     useProxy: false,
     authConfigs: [],
     qps: 10,
@@ -346,31 +310,25 @@ export const mockPartners: PartnerItem[] = [
     remark: "工商 + 司法涉诉主供应商，季度对账",
     baseUrlProd: "https://api.zkdata.com",
     baseUrlTest: "https://api-test.zkdata.com",
-    commonHeaders: [
-      { key: "Accept", value: "application/json" },
-      { key: "User-Agent", value: "carbon-ui" }
-    ],
     authConfigs: [
       {
         id: 11,
-        name: "主账号",
-        authType: "appKeySecret",
-        appKey: "zk_9f3a2c71",
-        appSecret: "7d1f8e2b4c9a6350e8f1a2b3c4d5e6f7",
-        signAlgorithm: "hmacSha256",
-        signRule: "appKey+timestamp+nonce",
-        timestampUnit: "s",
+        name: "公共请求头",
+        authType: "header",
+        headers: [
+          { key: "X-App-Key", value: "zk_9f3a2c71" },
+          { key: "Accept", value: "application/json" }
+        ],
         enabled: true
       },
       {
         id: 12,
-        name: "备用账号",
-        authType: "oauth2",
-        appKey: "zk_bak_2a9c",
-        appSecret: "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7",
-        tokenUrl: "https://api.zkdata.com/oauth/token",
-        grantType: "client_credentials",
-        tokenExpire: 7200,
+        name: "备用签名脚本",
+        authType: "script",
+        scriptLang: "groovy",
+        scriptTimeout: 3000,
+        scriptVersion: 1,
+        scriptCode: groovyScriptTemplate,
         enabled: false
       }
     ],
@@ -454,14 +412,11 @@ export const mockPartners: PartnerItem[] = [
     remark: "接口签名规则复杂，使用 Groovy 脚本完成鉴权",
     baseUrlProd: "https://open.qixintong.com",
     baseUrlTest: "https://open-test.qixintong.com",
-    commonHeaders: [{ key: "Accept", value: "application/json" }],
     authConfigs: [
       {
         id: 21,
         name: "复杂签名脚本",
         authType: "script",
-        appKey: "qxt_7c1d",
-        appSecret: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
         scriptLang: "groovy",
         scriptTimeout: 3000,
         scriptVersion: 3,
@@ -530,16 +485,18 @@ export const mockPartners: PartnerItem[] = [
     createTime: "2026-02-02 10:05:00",
     remark: "合同到期未续签，已停用",
     baseUrlProd: "https://api.nfda.com.cn",
-    commonHeaders: [],
     useProxy: true,
     proxyType: "http",
     proxyUrl: "http://10.0.0.8:7890",
     authConfigs: [
       {
         id: 31,
-        name: "IP 白名单",
-        authType: "ipWhitelist",
-        ipWhitelist: "203.0.113.10\n203.0.113.11",
+        name: "公共请求头",
+        authType: "header",
+        headers: [
+          { key: "X-Auth-Token", value: "nfda_access_2025" },
+          { key: "X-Client", value: "carbon-ui" }
+        ],
         enabled: true
       }
     ],
@@ -586,21 +543,25 @@ export const mockPartners: PartnerItem[] = [
     createTime: "2026-03-05 14:30:00",
     baseUrlProd: "https://restapi.beidou-lbs.com",
     baseUrlTest: "https://restapi-test.beidou-lbs.com",
-    commonHeaders: [{ key: "Accept", value: "application/json" }],
     authConfigs: [
       {
         id: 41,
-        name: "Bearer Token",
-        authType: "bearer",
-        appKey: "bd_token_prod",
-        appSecret: "9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+        name: "公共请求头",
+        authType: "header",
+        headers: [
+          { key: "Authorization", value: "Bearer bd_token_prod" },
+          { key: "Accept", value: "application/json" }
+        ],
         enabled: true
       },
       {
         id: 42,
-        name: "双向证书",
-        authType: "mtls",
-        certName: "beidou-client.p12",
+        name: "签名脚本",
+        authType: "script",
+        scriptLang: "groovy",
+        scriptTimeout: 2000,
+        scriptVersion: 2,
+        scriptCode: groovyScriptTemplate,
         enabled: false
       }
     ],
@@ -670,13 +631,12 @@ export const mockPartners: PartnerItem[] = [
     remark: "联调中，仅开放测试环境",
     baseUrlProd: "https://api.swgov-data.cn",
     baseUrlTest: "https://api-test.swgov-data.cn",
-    commonHeaders: [{ key: "Accept", value: "application/json" }],
     authConfigs: [
       {
         id: 51,
-        name: "政务网关 API Key",
-        authType: "apiKey",
-        appKey: "swgov_key_2026",
+        name: "公共请求头",
+        authType: "header",
+        headers: [{ key: "X-Gov-Token", value: "swgov_key_2026" }],
         enabled: true
       }
     ],

@@ -6,7 +6,6 @@ import {
   authTypeOptions,
   createEmptyAuth,
   groovyScriptTemplate,
-  signAlgorithmOptions,
   type AuthConfig
 } from "../data";
 
@@ -15,10 +14,9 @@ defineOptions({ name: "AuthDialog" });
 const ctxFields = [
   { name: "ctx.url", desc: "完整请求地址" },
   { name: "ctx.method", desc: "请求方式 GET / POST" },
-  { name: "ctx.headers", desc: "已合并的公共请求头（mutable Map）" },
+  { name: "ctx.headers", desc: "当前请求头（mutable Map）" },
   { name: "ctx.query", desc: "查询参数（mutable Map）" },
   { name: "ctx.body", desc: "请求体" },
-  { name: "ctx.config", desc: "当前鉴权配置：appKey / appSecret / 自定义键" },
   {
     name: "ctx.lib",
     desc: "md5() sha256() hmacSha256() base64() uuid() timestamp() json()"
@@ -41,18 +39,14 @@ const formRef = ref<FormInstance>();
 const form = ref<AuthConfig>(createEmptyAuth());
 
 const isScript = computed(() => form.value.authType === "script");
-const isOAuth2 = computed(() => form.value.authType === "oauth2");
-const isIpWhitelist = computed(() => form.value.authType === "ipWhitelist");
-const isMtls = computed(() => form.value.authType === "mtls");
-const isHmac = computed(
-  () => form.value.authType === "hmac" || form.value.authType === "appKeySecret"
+const isHeader = computed(() => form.value.authType === "header");
+
+/** 请求头列表：AuthConfig.headers 可选，这里收口成数组供 v-model 使用 */
+const headers = computed(() => form.value.headers ?? []);
+
+const validHeaderCount = computed(
+  () => headers.value.filter(item => item.key.trim()).length
 );
-const needSecret = computed(() =>
-  ["appKeySecret", "oauth2", "bearer", "hmac", "script"].includes(
-    form.value.authType
-  )
-);
-const needAppKey = computed(() => !isIpWhitelist.value && !isMtls.value);
 
 /** CodeEditor 只接受 string，这里收口 undefined */
 const scriptCode = computed({
@@ -62,25 +56,48 @@ const scriptCode = computed({
   }
 });
 
+function validateHeaders(
+  _rule: unknown,
+  _value: unknown,
+  callback: (error?: Error) => void
+) {
+  const rows = headers.value.filter(item => item.key.trim());
+  if (!rows.length) {
+    callback(new Error("至少填写一条请求头"));
+    return;
+  }
+  const empty = rows.find(item => !item.value.trim());
+  if (empty) {
+    callback(new Error(`请求头「${empty.key}」缺少值`));
+    return;
+  }
+  callback();
+}
+
 const rules = computed<FormRules>(() => ({
   name: [{ required: true, message: "请输入鉴权名称", trigger: "blur" }],
   authType: [{ required: true, message: "请选择鉴权方式", trigger: "change" }],
-  appKey: needAppKey.value
-    ? [{ required: true, message: "请填写 AppKey", trigger: "blur" }]
-    : [],
-  tokenUrl: isOAuth2.value
-    ? [{ required: true, message: "请填写 Token 地址", trigger: "blur" }]
-    : [],
-  ipWhitelist: isIpWhitelist.value
-    ? [{ required: true, message: "请填写 IP 白名单", trigger: "blur" }]
-    : [],
-  certName: isMtls.value
-    ? [{ required: true, message: "请填写证书文件名", trigger: "blur" }]
+  headers: isHeader.value
+    ? [{ validator: validateHeaders, trigger: "blur" }]
     : [],
   scriptCode: isScript.value
     ? [{ required: true, message: "请填写 Groovy 脚本", trigger: "blur" }]
     : []
 }));
+
+/** 补齐当前方式需要的默认字段 */
+function fillDefaults() {
+  if (form.value.authType === "header") {
+    if (!form.value.headers?.length) {
+      form.value.headers = [{ key: "", value: "" }];
+    }
+    return;
+  }
+  form.value.scriptLang = "groovy";
+  form.value.scriptTimeout = form.value.scriptTimeout || 3000;
+  form.value.scriptVersion = form.value.scriptVersion || 1;
+  form.value.scriptCode = form.value.scriptCode || groovyScriptTemplate;
+}
 
 watch(
   () => props.modelValue,
@@ -89,28 +106,26 @@ watch(
     form.value = props.editing
       ? (JSON.parse(JSON.stringify(props.editing)) as AuthConfig)
       : createEmptyAuth();
-    if (form.value.authType === "script") {
-      form.value.scriptLang = "groovy";
-      form.value.scriptTimeout = form.value.scriptTimeout || 3000;
-      form.value.scriptVersion = form.value.scriptVersion || 1;
-      form.value.scriptCode = form.value.scriptCode || groovyScriptTemplate;
-    }
+    fillDefaults();
     formRef.value?.clearValidate();
   },
   { immediate: true }
 );
 
-/** 切换到脚本方式时补齐脚本相关字段 */
+/** 切换鉴权方式时补齐对应字段 */
 watch(
   () => form.value.authType,
-  type => {
-    if (type !== "script") return;
-    form.value.scriptLang = "groovy";
-    form.value.scriptTimeout = form.value.scriptTimeout || 3000;
-    form.value.scriptVersion = form.value.scriptVersion || 1;
-    form.value.scriptCode = form.value.scriptCode || groovyScriptTemplate;
-  }
+  () => fillDefaults()
 );
+
+function addHeaderRow() {
+  if (!form.value.headers) form.value.headers = [];
+  form.value.headers.push({ key: "", value: "" });
+}
+
+function removeHeaderRow(index: number) {
+  form.value.headers?.splice(index, 1);
+}
 
 function close() {
   emit("update:modelValue", false);
@@ -119,7 +134,18 @@ function close() {
 async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) return;
-  emit("submit", JSON.parse(JSON.stringify(form.value)) as AuthConfig);
+
+  const payload = JSON.parse(JSON.stringify(form.value)) as AuthConfig;
+  if (payload.authType === "header") {
+    payload.headers = (payload.headers ?? []).filter(item => item.key.trim());
+    payload.scriptCode = undefined;
+    payload.scriptLang = undefined;
+    payload.scriptTimeout = undefined;
+    payload.scriptVersion = undefined;
+  } else {
+    payload.headers = [];
+  }
+  emit("submit", payload);
 }
 
 /** 前端只做入口方法静态检查，真正的执行在服务端 Groovy 沙箱 */
@@ -145,8 +171,8 @@ function resetTemplate() {
   <el-dialog
     class="auth-dlg"
     :model-value="props.modelValue"
-    width="900px"
-    top="6vh"
+    width="860px"
+    top="8vh"
     destroy-on-close
     @update:model-value="close"
   >
@@ -154,7 +180,7 @@ function resetTemplate() {
       <div class="dlg-head">
         <div class="dlg-head__text">
           <h2>{{ props.editing ? "编辑鉴权" : "新增鉴权" }}</h2>
-          <p>一个合作方可以配置多种鉴权方式，调用时按接口绑定关系选用</p>
+          <p>一个合作方可配置多种鉴权方式，调用时按接口绑定关系选用</p>
         </div>
         <div class="dlg-head__state">
           <span>启用</span>
@@ -176,7 +202,9 @@ function resetTemplate() {
           <el-form-item label="鉴权名称" prop="name">
             <el-input
               v-model="form.name"
-              placeholder="如：主账号 / 备用账号 / 复杂签名脚本"
+              :placeholder="
+                isScript ? '如：复杂签名脚本' : '如：公共请求头 / X-App-Key'
+              "
               maxlength="40"
             />
           </el-form-item>
@@ -193,107 +221,51 @@ function resetTemplate() {
         </div>
       </section>
 
-      <section v-if="needAppKey" class="blk">
-        <div class="blk__t"><span>凭证</span></div>
-        <div class="fg fg--2">
-          <el-form-item label="AppKey" prop="appKey">
-            <el-input v-model="form.appKey" placeholder="合作方分配的 AppKey" />
-          </el-form-item>
-          <el-form-item label="AppSecret">
-            <el-input
-              v-model="form.appSecret"
-              type="password"
-              show-password
-              :placeholder="
-                isScript
-                  ? '服务端注入脚本 ctx.config.appSecret'
-                  : '合作方分配的 AppSecret'
-              "
-            />
-          </el-form-item>
-        </div>
-      </section>
-
-      <section v-if="isHmac" class="blk">
-        <div class="blk__t"><span>签名规则</span></div>
-        <div class="fg fg--3">
-          <el-form-item label="签名算法">
-            <el-select v-model="form.signAlgorithm">
-              <el-option
-                v-for="item in signAlgorithmOptions"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="时间戳单位">
-            <el-radio-group v-model="form.timestampUnit" class="seg">
-              <el-radio-button label="s">秒</el-radio-button>
-              <el-radio-button label="ms">毫秒</el-radio-button>
-            </el-radio-group>
-          </el-form-item>
-          <el-form-item label="签名规则">
-            <el-input v-model="form.signRule" placeholder="appKey+ts+nonce" />
-          </el-form-item>
-        </div>
-      </section>
-
-      <section v-if="isOAuth2" class="blk">
-        <div class="blk__t"><span>OAuth2</span></div>
-        <div class="fg fg--3">
-          <el-form-item label="Token 地址" prop="tokenUrl" class="span-2">
-            <el-input
-              v-model="form.tokenUrl"
-              placeholder="https://api.example.com/oauth/token"
-            />
-          </el-form-item>
-          <el-form-item label="授权模式">
-            <el-select v-model="form.grantType">
-              <el-option
-                label="client_credentials"
-                value="client_credentials"
-              />
-              <el-option label="password" value="password" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="Token 有效期（秒）">
-            <el-input-number
-              v-model="form.tokenExpire"
-              :min="60"
-              :step="60"
-              controls-position="right"
-            />
-          </el-form-item>
-          <div class="fg__note span-2">
-            到期前 60 秒自动刷新，刷新失败时按调用策略重试
+      <section v-if="isHeader" class="blk">
+        <div class="blk__t">
+          <span>请求头</span>
+          <em class="chip">{{ validHeaderCount }} 项</em>
+          <div class="blk__ops">
+            <el-button link type="primary" @click="addHeaderRow">
+              添加一行
+            </el-button>
           </div>
         </div>
-      </section>
-
-      <section v-if="isIpWhitelist" class="blk">
-        <div class="blk__t"><span>IP 白名单</span></div>
-        <el-form-item prop="ipWhitelist" class="no-label">
-          <el-input
-            v-model="form.ipWhitelist"
-            type="textarea"
-            :rows="4"
-            placeholder="每行一个 IP 或网段，如 203.0.113.10"
-          />
+        <el-form-item prop="headers" class="no-label">
+          <div class="hlist">
+            <div
+              v-for="(item, index) in headers"
+              :key="`h-${index}`"
+              class="hlist__row"
+            >
+              <el-input
+                v-model="item.key"
+                class="hlist__k"
+                placeholder="Header 名称，如 X-App-Key"
+                maxlength="60"
+              />
+              <el-input
+                v-model="item.value"
+                class="hlist__v"
+                placeholder="Header 值"
+                maxlength="200"
+              />
+              <button
+                type="button"
+                class="hlist__del"
+                @click="removeHeaderRow(index)"
+              >
+                移除
+              </button>
+            </div>
+            <p v-if="!headers.length" class="hlist__empty">
+              尚未添加请求头，保存后每次调用都会带上这里的键值
+            </p>
+          </div>
         </el-form-item>
       </section>
 
-      <section v-if="isMtls" class="blk">
-        <div class="blk__t"><span>双向证书</span></div>
-        <el-form-item label="客户端证书" prop="certName">
-          <el-input
-            v-model="form.certName"
-            placeholder="如 beidou-client.p12"
-          />
-        </el-form-item>
-      </section>
-
-      <section v-if="isScript" class="blk blk--script">
+      <section v-else class="blk blk--script">
         <div class="blk__t">
           <span>签名脚本</span>
           <em class="chip chip--code">Groovy</em>
@@ -307,7 +279,7 @@ function resetTemplate() {
           </div>
         </div>
         <el-form-item prop="scriptCode" class="no-label">
-          <CodeEditor v-model="scriptCode" height="340px" />
+          <CodeEditor v-model="scriptCode" height="320px" />
         </el-form-item>
         <div class="fg fg--2">
           <el-form-item label="执行超时（ms）">
@@ -351,8 +323,7 @@ function resetTemplate() {
               沙箱：ImportCustomizer 白名单 java.security / javax.crypto /
               java.util / java.time /
               org.apache.commons.codec，SecureASTCustomizer
-              禁止文件、网络与进程操作；appSecret
-              由服务端注入，前端仅显示掩码。返回
+              禁止文件、网络与进程操作；凭证与密钥直接写在脚本内，随配置加密存储。返回
               <code>[headers: [...], query: [...], body: ...]</code>
               会合并进实际请求；抛异常或返回
               <code>[error: "…"]</code> 判定鉴权失败。
@@ -395,7 +366,7 @@ function resetTemplate() {
 
 :global(.auth-dlg .el-dialog__body) {
   max-height: 66vh;
-  padding: 4px 24px 8px;
+  padding: 4px 24px 18px;
   overflow-y: auto;
 }
 
@@ -487,6 +458,8 @@ function resetTemplate() {
   font-size: 11px;
   font-style: normal;
   line-height: 18px;
+  color: var(--ink-2);
+  background: var(--el-fill-color-light);
   border-radius: 4px;
 
   &--code {
@@ -556,8 +529,46 @@ function resetTemplate() {
   line-height: 1.7;
 }
 
-.seg :deep(.el-radio-button__inner) {
-  font-size: 12px;
+/* ------------------------------ 请求头列表 ------------------------------ */
+.hlist {
+  width: 100%;
+
+  &__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 48px;
+    gap: 10px;
+    align-items: center;
+    padding: 5px 0;
+
+    & + & {
+      border-top: 1px dashed var(--line-soft);
+    }
+  }
+
+  &__k :deep(.el-input__inner),
+  &__v :deep(.el-input__inner) {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 12px;
+  }
+
+  &__del {
+    padding: 0;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    background: none;
+    border: 0;
+
+    &:hover {
+      color: var(--el-color-danger);
+    }
+  }
+
+  &__empty {
+    margin: 4px 0 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
 }
 
 /* ------------------------------- 脚本区 ------------------------------- */

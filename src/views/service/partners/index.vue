@@ -53,7 +53,12 @@ const columns: TableColumnList = [
   { label: "类型", prop: "types", minWidth: 160, slot: "types" },
   { label: "联系人", prop: "contact", minWidth: 110 },
   { label: "联系电话", prop: "phone", minWidth: 140 },
-  { label: "接口数", prop: "interfaces", minWidth: 100, slot: "interfaceCount" },
+  {
+    label: "接口数",
+    prop: "interfaces",
+    minWidth: 100,
+    slot: "interfaceCount"
+  },
   { label: "状态", prop: "status", minWidth: 100, slot: "status" },
   { label: "创建时间", prop: "createTime", minWidth: 170 },
   { label: "操作", fixed: "right", width: 150, slot: "operation" }

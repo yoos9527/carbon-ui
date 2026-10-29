@@ -17,7 +17,6 @@ import BackIcon from "~icons/ri/arrow-left-line";
 import AddIcon from "~icons/ri/add-line";
 import EditIcon from "~icons/ri/edit-line";
 import DeleteIcon from "~icons/ri/delete-bin-line";
-import KeyIcon from "~icons/ri/key-2-line";
 
 /** 组件 name 必须与路由 name 一致，否则标签页缓存（keepAlive）失效 */
 defineOptions({ name: "ServicePartnerDetail" });
@@ -29,7 +28,6 @@ type EnvForm = Pick<
   | "charset"
   | "connectTimeout"
   | "readTimeout"
-  | "commonHeaders"
   | "useProxy"
   | "proxyType"
   | "proxyUrl"
@@ -73,7 +71,6 @@ const billingForm = ref<BillingForm | null>(null);
 
 const authDialogVisible = ref(false);
 const editingAuth = ref<AuthConfig | null>(null);
-const revealedSecrets = ref<string[]>([]);
 
 const charsetOptions = ["UTF-8", "GBK", "GB18030"];
 
@@ -125,25 +122,16 @@ function goBack() {
   router.push("/service/partners");
 }
 
-function maskSecret(value?: string) {
-  if (!value) return "-";
-  if (value.length <= 8) return "****";
-  return `${value.slice(0, 4)}****${value.slice(-4)}`;
-}
-
-function secretKey(auth: AuthConfig) {
-  return `auth-${auth.id}`;
-}
-
-function isSecretRevealed(auth: AuthConfig) {
-  return revealedSecrets.value.includes(secretKey(auth));
-}
-
-function toggleSecret(auth: AuthConfig) {
-  const key = secretKey(auth);
-  revealedSecrets.value = isSecretRevealed(auth)
-    ? revealedSecrets.value.filter(item => item !== key)
-    : [...revealedSecrets.value, key];
+/** 鉴权列表「内容」列的摘要：header 列出请求头名，script 列版本 */
+function authContentBrief(auth: AuthConfig) {
+  if (auth.authType === "header") {
+    const keys = (auth.headers ?? []).map(item => item.key).filter(Boolean);
+    return keys.length
+      ? keys.slice(0, 3).join(" · ") +
+          (keys.length > 3 ? ` 等 ${keys.length} 项` : "")
+      : "未配置请求头";
+  }
+  return `Groovy v${auth.scriptVersion ?? 1} · 超时 ${auth.scriptTimeout ?? 3000}ms`;
 }
 
 /* ------------------------------ 三块公共配置的编辑态 ------------------------------ */
@@ -157,7 +145,6 @@ function startEditEnv() {
     charset: partner.charset,
     connectTimeout: partner.connectTimeout,
     readTimeout: partner.readTimeout,
-    commonHeaders: JSON.parse(JSON.stringify(partner.commonHeaders)),
     useProxy: partner.useProxy,
     proxyType: partner.proxyType,
     proxyUrl: partner.proxyUrl
@@ -173,7 +160,6 @@ function saveEnv() {
     ElMessage.warning("生产环境地址不能为空");
     return;
   }
-  form.commonHeaders = form.commonHeaders.filter(item => item.key.trim());
   Object.assign(partner, form);
   editingTab.value = "";
   ElMessage.success("环境与网络已保存");
@@ -238,16 +224,6 @@ function cancelEdit() {
   editingTab.value = "";
 }
 
-function addHeaderRow() {
-  envForm.value?.commonHeaders.push({ key: "", value: "" });
-}
-
-function removeHeaderRow(index: number) {
-  envForm.value?.commonHeaders.splice(index, 1);
-}
-
-/* ------------------------------ 鉴权配置 ------------------------------ */
-
 function openCreateAuth() {
   editingAuth.value = null;
   authDialogVisible.value = true;
@@ -285,9 +261,7 @@ async function removeAuth(auth: AuthConfig) {
   await ElMessageBox.confirm(`确认删除鉴权「${auth.name}」？`, "提示", {
     type: "warning"
   });
-  partner.authConfigs = partner.authConfigs.filter(
-    item => item.id !== auth.id
-  );
+  partner.authConfigs = partner.authConfigs.filter(item => item.id !== auth.id);
   ElMessage.success("已删除");
 }
 </script>
@@ -307,12 +281,9 @@ async function removeAuth(auth: AuthConfig) {
             <span class="dot" :class="detail.status === 1 ? 'is-on' : 'is-off'">
               {{ statusOption?.label ?? "未知" }}
             </span>
-            <span
-              v-for="label in typeLabels"
-              :key="label"
-              class="chip"
-              >{{ label }}</span
-            >
+            <span v-for="label in typeLabels" :key="label" class="chip">{{
+              label
+            }}</span>
             <span class="pd-head__code">{{ detail.code }}</span>
           </div>
         </div>
@@ -475,56 +446,6 @@ async function removeAuth(auth: AuthConfig) {
                   />
                 </div>
               </form>
-
-              <div class="sub">
-                <div class="sub__head">
-                  <h3 class="sub__title">公共请求头</h3>
-                  <span class="sub__hint">随每次请求发送，可被接口级配置覆盖</span>
-                </div>
-
-                <div v-if="editingTab !== 'env'" class="kvlist">
-                  <div
-                    v-for="item in detail.commonHeaders"
-                    :key="item.key"
-                    class="kvlist__row"
-                  >
-                    <span class="kvlist__k mono">{{ item.key }}</span>
-                    <span class="kvlist__v mono">{{ item.value }}</span>
-                  </div>
-                  <p v-if="!detail.commonHeaders.length" class="empty-inline">
-                    未配置公共请求头，多数数据服务商无需额外请求头
-                  </p>
-                </div>
-
-                <div v-else-if="envForm" class="kvlist is-edit">
-                  <div
-                    v-for="(item, index) in envForm.commonHeaders"
-                    :key="`header-${index}`"
-                    class="kvlist__row"
-                  >
-                    <el-input
-                      v-model="item.key"
-                      class="kvlist__input is-k"
-                      placeholder="Header 名称"
-                    />
-                    <el-input
-                      v-model="item.value"
-                      class="kvlist__input"
-                      placeholder="Header 值"
-                    />
-                    <button
-                      type="button"
-                      class="txt txt--danger"
-                      @click="removeHeaderRow(index)"
-                    >
-                      移除
-                    </button>
-                  </div>
-                  <el-button text type="primary" :icon="AddIcon" @click="addHeaderRow">
-                    添加请求头
-                  </el-button>
-                </div>
-              </div>
 
               <div v-if="editingTab === 'env'" class="editbar">
                 <span class="editbar__tip">修改后需保存才会生效</span>
@@ -719,7 +640,8 @@ async function removeAuth(auth: AuthConfig) {
                     <b
                       class="num"
                       :class="{
-                        'is-warn': quotaUsedPercent >= 100 - detail.warnThreshold
+                        'is-warn':
+                          quotaUsedPercent >= 100 - detail.warnThreshold
                       }"
                       >{{ quotaUsedPercent }}%</b
                     >
@@ -728,14 +650,15 @@ async function removeAuth(auth: AuthConfig) {
                     <i
                       :style="{ width: `${quotaUsedPercent}%` }"
                       :class="{
-                        'is-warn': quotaUsedPercent >= 100 - detail.warnThreshold
+                        'is-warn':
+                          quotaUsedPercent >= 100 - detail.warnThreshold
                       }"
                     />
                   </div>
                   <p class="meter__note">
                     已用 {{ detail.quotaUsed.toLocaleString() }} / 共
-                    {{ detail.quotaTotal.toLocaleString() }}，
-                    低于 {{ detail.warnThreshold }}% 时告警
+                    {{ detail.quotaTotal.toLocaleString() }}， 低于
+                    {{ detail.warnThreshold }}% 时告警
                   </p>
                 </div>
               </div>
@@ -769,11 +692,15 @@ async function removeAuth(auth: AuthConfig) {
                 </div>
                 <div class="f">
                   <dt class="f__k">套餐总量</dt>
-                  <dd class="f__v num">{{ detail.quotaTotal.toLocaleString() }}</dd>
+                  <dd class="f__v num">
+                    {{ detail.quotaTotal.toLocaleString() }}
+                  </dd>
                 </div>
                 <div class="f">
                   <dt class="f__k">已用额度</dt>
-                  <dd class="f__v num">{{ detail.quotaUsed.toLocaleString() }}</dd>
+                  <dd class="f__v num">
+                    {{ detail.quotaUsed.toLocaleString() }}
+                  </dd>
                 </div>
                 <div class="f">
                   <dt class="f__k">预警阈值（%）</dt>
@@ -888,10 +815,15 @@ async function removeAuth(auth: AuthConfig) {
                 <div>
                   <h2 class="sec__title">认证与鉴权</h2>
                   <p class="sec__hint">
-                    一个合作方可配置多种鉴权方式，由接口按需引用；脚本方式适用于无法用配置表达的签名
+                    一个合作方可配置多种鉴权方式，由接口按需引用：公共请求头随每次请求发送，Groovy
+                    脚本用于无法用配置表达的签名
                   </p>
                 </div>
-                <el-button type="primary" :icon="AddIcon" @click="openCreateAuth">
+                <el-button
+                  type="primary"
+                  :icon="AddIcon"
+                  @click="openCreateAuth"
+                >
                   新增鉴权
                 </el-button>
               </div>
@@ -899,8 +831,7 @@ async function removeAuth(auth: AuthConfig) {
               <div v-if="detail.authConfigs.length" class="alist">
                 <div class="alist__head">
                   <span>鉴权名称</span>
-                  <span>AppKey</span>
-                  <span>AppSecret</span>
+                  <span>内容</span>
                   <span>状态</span>
                   <span />
                 </div>
@@ -918,29 +849,12 @@ async function removeAuth(auth: AuthConfig) {
                       {{ getAuthTypeLabel(row.authType) }}
                     </span>
                   </div>
-                  <span class="mono alist__val">{{ row.appKey || "—" }}</span>
-                  <span class="alist__val mono">
-                    <template v-if="row.appSecret">
-                      {{
-                        isSecretRevealed(row)
-                          ? row.appSecret
-                          : maskSecret(row.appSecret)
-                      }}
-                      <button
-                        type="button"
-                        class="txt txt--sm"
-                        @click="toggleSecret(row)"
-                      >
-                        {{ isSecretRevealed(row) ? "隐藏" : "显示" }}
-                      </button>
-                    </template>
-                    <template v-else>—</template>
-                  </span>
-                  <span
-                    class="dot"
-                    :class="row.enabled ? 'is-on' : 'is-off'"
-                    >{{ row.enabled ? "启用" : "停用" }}</span
-                  >
+                  <div class="alist__content">
+                    <span class="alist__val">{{ authContentBrief(row) }}</span>
+                  </div>
+                  <span class="dot" :class="row.enabled ? 'is-on' : 'is-off'">{{
+                    row.enabled ? "启用" : "停用"
+                  }}</span>
                   <div class="alist__ops">
                     <button
                       type="button"
@@ -965,7 +879,11 @@ async function removeAuth(auth: AuthConfig) {
                 <p class="empty-state__hint">
                   配置后，接口才能在调用时完成签名与凭证注入
                 </p>
-                <el-button type="primary" :icon="AddIcon" @click="openCreateAuth">
+                <el-button
+                  type="primary"
+                  :icon="AddIcon"
+                  @click="openCreateAuth"
+                >
                   新增鉴权
                 </el-button>
               </div>
@@ -1147,7 +1065,9 @@ async function removeAuth(auth: AuthConfig) {
     text-align: left;
     font-size: 13px;
     color: var(--ink-2);
-    transition: background 0.15s, color 0.15s;
+    transition:
+      background 0.15s,
+      color 0.15s;
 
     /* 自绘选中指示条，避免内置 active-bar 在竖向布局下错位 */
     &::before {
@@ -1321,46 +1241,6 @@ async function removeAuth(auth: AuthConfig) {
   }
 }
 
-.kvlist {
-  margin-top: 4px;
-
-  &__row {
-    display: grid;
-    grid-template-columns: 220px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 16px;
-    padding: 9px 0;
-    border-bottom: 1px solid var(--line-soft);
-
-    &:last-child {
-      border-bottom: 0;
-    }
-  }
-
-  &__k {
-    font-size: 12px;
-    color: var(--ink-2);
-  }
-
-  &__v {
-    font-size: 13px;
-    color: var(--ink);
-    word-break: break-all;
-  }
-
-  &__input {
-    max-width: 420px;
-
-    &.is-k {
-      max-width: 220px;
-    }
-  }
-
-  &.is-edit &__row {
-    padding: 6px 0;
-  }
-}
-
 .empty-inline {
   margin: 12px 0 0;
   font-size: 13px;
@@ -1428,8 +1308,7 @@ async function removeAuth(auth: AuthConfig) {
   &__head,
   &__row {
     display: grid;
-    grid-template-columns: minmax(200px, 1.3fr) minmax(120px, 1fr)
-      minmax(180px, 1.2fr) 84px 104px;
+    grid-template-columns: minmax(200px, 1.2fr) minmax(220px, 1.6fr) 84px 104px;
     align-items: center;
     gap: 16px;
   }
@@ -1473,6 +1352,10 @@ async function removeAuth(auth: AuthConfig) {
     font-size: 12px;
     color: var(--ink-2);
     word-break: break-all;
+  }
+
+  &__content {
+    min-width: 0;
   }
 
   &__ops {
@@ -1529,7 +1412,8 @@ async function removeAuth(auth: AuthConfig) {
 }
 
 .mono {
-  font-family: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+  font-family:
+    ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
   font-size: 12px;
 }
 
