@@ -1,44 +1,88 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { ElMessage, ElMessageBox } from "element-plus";
 import {
+  billingTypeOptions,
   getAuthTypeLabel,
   getPartnerById,
   getPartnerTypeLabel,
   getStatusOption,
+  settleTypeOptions,
   type AuthConfig,
-  type PartnerInterfaceItem,
   type PartnerItem
 } from "./data";
 import AuthDialog from "./components/AuthDialog.vue";
-import InterfaceDialog from "./components/InterfaceDialog.vue";
 import BackIcon from "~icons/ri/arrow-left-line";
 import AddIcon from "~icons/ri/add-line";
 import EditIcon from "~icons/ri/edit-line";
 import DeleteIcon from "~icons/ri/delete-bin-line";
 import KeyIcon from "~icons/ri/key-2-line";
-import { ElMessage, ElMessageBox } from "element-plus";
 
 /** 组件 name 必须与路由 name 一致，否则标签页缓存（keepAlive）失效 */
 defineOptions({ name: "ServicePartnerDetail" });
 
+type EnvForm = Pick<
+  PartnerItem,
+  | "baseUrlProd"
+  | "baseUrlTest"
+  | "charset"
+  | "connectTimeout"
+  | "readTimeout"
+  | "commonHeaders"
+  | "useProxy"
+  | "proxyType"
+  | "proxyUrl"
+>;
+
+type StrategyForm = Pick<
+  PartnerItem,
+  | "qps"
+  | "dailyLimit"
+  | "concurrency"
+  | "retryTimes"
+  | "retryInterval"
+  | "breakerThreshold"
+  | "breakerRecoverMin"
+  | "cacheTtl"
+  | "alarmReceiver"
+>;
+
+type BillingForm = Pick<
+  PartnerItem,
+  | "billingType"
+  | "unitPrice"
+  | "quotaTotal"
+  | "quotaUsed"
+  | "warnThreshold"
+  | "settleType"
+  | "balance"
+  | "contractNo"
+>;
+
 const route = useRoute();
 const router = useRouter();
 
-const activeTab = ref("basic");
+const activeTab = ref("env");
 const detail = ref<PartnerItem | null>(null);
+/** 当前处于编辑态的 Tab，空串为全部只读 */
+const editingTab = ref<"" | "env" | "strategy" | "billing">("");
+const envForm = ref<EnvForm | null>(null);
+const strategyForm = ref<StrategyForm | null>(null);
+const billingForm = ref<BillingForm | null>(null);
+
 const authDialogVisible = ref(false);
 const editingAuth = ref<AuthConfig | null>(null);
-const interfaceDialogVisible = ref(false);
-const editingInterface = ref<PartnerInterfaceItem | null>(null);
-/** 已点击展示明文的密钥，key 为 `auth-{id}` */
 const revealedSecrets = ref<string[]>([]);
+
+const charsetOptions = ["UTF-8", "GBK", "GB18030"];
 
 function load() {
   const found = getPartnerById(route.params.id as string);
   detail.value = found
     ? (JSON.parse(JSON.stringify(found)) as PartnerItem)
     : null;
+  editingTab.value = "";
 }
 
 watch(() => route.params.id, load, { immediate: true });
@@ -71,7 +115,10 @@ const remainQuota = computed(() => {
 const quotaUsedPercent = computed(() => {
   const partner = detail.value;
   if (!partner || !partner.quotaTotal) return 0;
-  return Math.min(100, Math.round((partner.quotaUsed / partner.quotaTotal) * 100));
+  return Math.min(
+    100,
+    Math.round((partner.quotaUsed / partner.quotaTotal) * 100)
+  );
 });
 
 function goBack() {
@@ -99,12 +146,107 @@ function toggleSecret(auth: AuthConfig) {
     : [...revealedSecrets.value, key];
 }
 
-function authName(authId?: number) {
-  if (!authId) return "-";
-  return (
-    detail.value?.authConfigs.find(item => item.id === authId)?.name ?? "-"
-  );
+/* ------------------------------ 三块公共配置的编辑态 ------------------------------ */
+
+function startEditEnv() {
+  const partner = detail.value;
+  if (!partner) return;
+  envForm.value = {
+    baseUrlProd: partner.baseUrlProd,
+    baseUrlTest: partner.baseUrlTest,
+    charset: partner.charset,
+    connectTimeout: partner.connectTimeout,
+    readTimeout: partner.readTimeout,
+    commonHeaders: JSON.parse(JSON.stringify(partner.commonHeaders)),
+    useProxy: partner.useProxy,
+    proxyType: partner.proxyType,
+    proxyUrl: partner.proxyUrl
+  };
+  editingTab.value = "env";
 }
+
+function saveEnv() {
+  const partner = detail.value;
+  const form = envForm.value;
+  if (!partner || !form) return;
+  if (!form.baseUrlProd.trim()) {
+    ElMessage.warning("生产环境地址不能为空");
+    return;
+  }
+  form.commonHeaders = form.commonHeaders.filter(item => item.key.trim());
+  Object.assign(partner, form);
+  editingTab.value = "";
+  ElMessage.success("环境与网络已保存");
+}
+
+function startEditStrategy() {
+  const partner = detail.value;
+  if (!partner) return;
+  strategyForm.value = {
+    qps: partner.qps,
+    dailyLimit: partner.dailyLimit,
+    concurrency: partner.concurrency,
+    retryTimes: partner.retryTimes,
+    retryInterval: partner.retryInterval,
+    breakerThreshold: partner.breakerThreshold,
+    breakerRecoverMin: partner.breakerRecoverMin,
+    cacheTtl: partner.cacheTtl,
+    alarmReceiver: partner.alarmReceiver
+  };
+  editingTab.value = "strategy";
+}
+
+function saveStrategy() {
+  const partner = detail.value;
+  const form = strategyForm.value;
+  if (!partner || !form) return;
+  Object.assign(partner, form);
+  editingTab.value = "";
+  ElMessage.success("调用策略已保存");
+}
+
+function startEditBilling() {
+  const partner = detail.value;
+  if (!partner) return;
+  billingForm.value = {
+    billingType: partner.billingType,
+    unitPrice: partner.unitPrice,
+    quotaTotal: partner.quotaTotal,
+    quotaUsed: partner.quotaUsed,
+    warnThreshold: partner.warnThreshold,
+    settleType: partner.settleType,
+    balance: partner.balance,
+    contractNo: partner.contractNo
+  };
+  editingTab.value = "billing";
+}
+
+function saveBilling() {
+  const partner = detail.value;
+  const form = billingForm.value;
+  if (!partner || !form) return;
+  if (form.quotaUsed > form.quotaTotal) {
+    ElMessage.warning("已用额度不能大于套餐总量");
+    return;
+  }
+  Object.assign(partner, form);
+  editingTab.value = "";
+  ElMessage.success("计费与额度已保存");
+}
+
+function cancelEdit() {
+  editingTab.value = "";
+}
+
+function addHeaderRow() {
+  envForm.value?.commonHeaders.push({ key: "", value: "" });
+}
+
+function removeHeaderRow(index: number) {
+  envForm.value?.commonHeaders.splice(index, 1);
+}
+
+/* ------------------------------ 鉴权配置 ------------------------------ */
 
 function openCreateAuth() {
   editingAuth.value = null;
@@ -148,53 +290,17 @@ async function removeAuth(auth: AuthConfig) {
   );
   ElMessage.success("已删除");
 }
-
-function openCreateInterface() {
-  editingInterface.value = null;
-  interfaceDialogVisible.value = true;
-}
-
-function openEditInterface(row: PartnerInterfaceItem) {
-  editingInterface.value = JSON.parse(JSON.stringify(row));
-  interfaceDialogVisible.value = true;
-}
-
-function saveInterface(row: PartnerInterfaceItem) {
-  const partner = detail.value;
-  if (!partner) return;
-  const index = partner.interfaces.findIndex(item => item.id === row.id);
-  if (index >= 0) {
-    partner.interfaces[index] = row;
-    ElMessage.success("接口配置已更新");
-  } else {
-    partner.interfaces.push(row);
-    ElMessage.success("接口配置已新增");
-  }
-  interfaceDialogVisible.value = false;
-}
-
-async function removeInterface(row: PartnerInterfaceItem) {
-  const partner = detail.value;
-  if (!partner) return;
-  await ElMessageBox.confirm(`确认删除接口「${row.name}」？`, "提示", {
-    type: "warning"
-  });
-  partner.interfaces = partner.interfaces.filter(item => item.id !== row.id);
-  ElMessage.success("已删除");
-}
 </script>
 
 <template>
   <div class="main">
     <el-card shadow="never">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center">
-          <el-button link :icon="BackIcon" @click="goBack">返回</el-button>
-          <span class="ml-2 text-base font-medium">合作方详情</span>
-          <span v-if="detail" class="ml-2 text-sm text-gray-400">
-            {{ detail.code }}
-          </span>
-        </div>
+      <div class="flex items-center">
+        <el-button link :icon="BackIcon" @click="goBack">返回</el-button>
+        <span class="ml-2 text-base font-medium">合作方详情</span>
+        <span v-if="detail" class="ml-2 text-sm text-gray-400">
+          {{ detail.code }}
+        </span>
       </div>
     </el-card>
 
@@ -203,11 +309,7 @@ async function removeInterface(row: PartnerInterfaceItem) {
         <div class="overview">
           <div class="overview__title">
             <span class="text-lg font-medium">{{ detail.name }}</span>
-            <el-tag
-              v-if="statusOption"
-              :type="statusOption.tagType"
-              class="ml-2"
-            >
+            <el-tag v-if="statusOption" :type="statusOption.tagType" class="ml-2">
               {{ statusOption.label }}
             </el-tag>
             <el-tag
@@ -239,73 +341,34 @@ async function removeInterface(row: PartnerInterfaceItem) {
 
       <el-card shadow="never" class="mt-4">
         <el-tabs v-model="activeTab">
-          <!-- 1 基本信息 -->
-          <el-tab-pane label="基本信息" name="basic">
-            <el-descriptions :column="2" border label-width="140px">
-              <el-descriptions-item label="合作方名称">
-                {{ detail.name }}
-              </el-descriptions-item>
-              <el-descriptions-item label="合作方编码">
-                {{ detail.code }}
-              </el-descriptions-item>
-              <el-descriptions-item label="服务商类型">
-                <el-tag
-                  v-for="label in typeLabels"
-                  :key="label"
-                  size="small"
-                  class="mr-2"
-                >
-                  {{ label }}
-                </el-tag>
-                <span v-if="!typeLabels.length">-</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="服务范围">
-                {{ detail.scope.join(" / ") || "-" }}
-              </el-descriptions-item>
-              <el-descriptions-item label="官网">
-                <el-link
-                  v-if="detail.website"
-                  type="primary"
-                  :href="detail.website"
-                  target="_blank"
-                >
-                  {{ detail.website }}
-                </el-link>
-                <span v-else>-</span>
-              </el-descriptions-item>
-              <el-descriptions-item label="状态">
-                <el-tag v-if="statusOption" :type="statusOption.tagType">
-                  {{ statusOption.label }}
-                </el-tag>
-              </el-descriptions-item>
-              <el-descriptions-item label="商务联系人">
-                {{ detail.contact || "-" }}
-              </el-descriptions-item>
-              <el-descriptions-item label="联系电话">
-                {{ detail.phone || "-" }}
-              </el-descriptions-item>
-              <el-descriptions-item label="邮箱">
-                {{ detail.email || "-" }}
-              </el-descriptions-item>
-              <el-descriptions-item label="技术支持电话">
-                {{ detail.supportPhone || "-" }}
-              </el-descriptions-item>
-              <el-descriptions-item label="合作起止">
-                {{ detail.cooperateStart || "-" }} ~
-                {{ detail.cooperateEnd || "-" }}
-              </el-descriptions-item>
-              <el-descriptions-item label="创建时间">
-                {{ detail.createTime || "-" }}
-              </el-descriptions-item>
-              <el-descriptions-item label="备注" :span="2">
-                {{ detail.remark || "-" }}
-              </el-descriptions-item>
-            </el-descriptions>
-          </el-tab-pane>
-
-          <!-- 2 环境与网络 -->
+          <!-- 环境与网络 -->
           <el-tab-pane label="环境与网络" name="env">
-            <el-descriptions :column="2" border label-width="140px">
+            <div class="tab-bar">
+              <span class="tab-tip">
+                合作方公共的地址、超时与网络参数，接口可单独覆盖
+              </span>
+              <div>
+                <template v-if="editingTab === 'env'">
+                  <el-button @click="cancelEdit">取消</el-button>
+                  <el-button type="primary" @click="saveEnv">保存</el-button>
+                </template>
+                <el-button
+                  v-else
+                  type="primary"
+                  :icon="EditIcon"
+                  @click="startEditEnv"
+                >
+                  编辑
+                </el-button>
+              </div>
+            </div>
+
+            <el-descriptions
+              v-if="editingTab !== 'env'"
+              :column="2"
+              border
+              label-width="140px"
+            >
               <el-descriptions-item label="生产环境地址">
                 {{ detail.baseUrlProd || "-" }}
               </el-descriptions-item>
@@ -334,22 +397,489 @@ async function removeInterface(row: PartnerInterfaceItem) {
               </el-descriptions-item>
             </el-descriptions>
 
-            <div class="section-title">公共请求头</div>
-            <el-table
-              :data="detail.commonHeaders"
-              border
-              size="small"
-              empty-text="未配置公共请求头"
+            <el-form
+              v-else-if="envForm"
+              :model="envForm"
+              label-width="140px"
+              class="edit-form"
             >
-              <el-table-column prop="key" label="参数名" min-width="200" />
-              <el-table-column prop="value" label="参数值" min-width="260" />
-            </el-table>
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="生产环境地址" required>
+                    <el-input
+                      v-model="envForm.baseUrlProd"
+                      placeholder="https://api.example.com"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="测试环境地址">
+                    <el-input
+                      v-model="envForm.baseUrlTest"
+                      placeholder="https://api-test.example.com"
+                    />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="8">
+                  <el-form-item label="字符编码">
+                    <el-select v-model="envForm.charset" class="w-full">
+                      <el-option
+                        v-for="item in charsetOptions"
+                        :key="item"
+                        :label="item"
+                        :value="item"
+                      />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="连接超时">
+                    <el-input-number
+                      v-model="envForm.connectTimeout"
+                      :min="100"
+                      :step="500"
+                      controls-position="right"
+                      class="num"
+                    />
+                    <span class="unit">ms</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="读取超时">
+                    <el-input-number
+                      v-model="envForm.readTimeout"
+                      :min="100"
+                      :step="500"
+                      controls-position="right"
+                      class="num"
+                    />
+                    <span class="unit">ms</span>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="8">
+                  <el-form-item label="是否走代理">
+                    <el-switch v-model="envForm.useProxy" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="代理类型">
+                    <el-select
+                      v-model="envForm.proxyType"
+                      class="w-full"
+                      :disabled="!envForm.useProxy"
+                      placeholder="请选择"
+                    >
+                      <el-option label="HTTP" value="http" />
+                      <el-option label="SOCKS5" value="socks5" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="代理地址">
+                    <el-input
+                      v-model="envForm.proxyUrl"
+                      :disabled="!envForm.useProxy"
+                      placeholder="http://10.0.0.8:7890"
+                    />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+
+              <div class="section-title">公共请求头</div>
+              <div
+                v-for="(item, index) in envForm.commonHeaders"
+                :key="`header-${index}`"
+                class="kv-row"
+              >
+                <el-input v-model="item.key" placeholder="参数名" class="kv-key" />
+                <el-input
+                  v-model="item.value"
+                  placeholder="参数值"
+                  class="kv-value"
+                />
+                <el-button
+                  link
+                  type="danger"
+                  :icon="DeleteIcon"
+                  @click="removeHeaderRow(index)"
+                />
+              </div>
+              <el-button link type="primary" :icon="AddIcon" @click="addHeaderRow">
+                添加请求头
+              </el-button>
+            </el-form>
+
+            <template v-if="editingTab !== 'env'">
+              <div class="section-title">公共请求头</div>
+              <el-table
+                :data="detail.commonHeaders"
+                border
+                size="small"
+                empty-text="未配置公共请求头"
+              >
+                <el-table-column prop="key" label="参数名" min-width="200" />
+                <el-table-column prop="value" label="参数值" min-width="260" />
+              </el-table>
+            </template>
           </el-tab-pane>
 
-          <!-- 3 认证与鉴权 -->
+          <!-- 调用策略 -->
+          <el-tab-pane label="调用策略" name="strategy">
+            <div class="tab-bar">
+              <span class="tab-tip">限流、重试、熔断与缓存策略</span>
+              <div>
+                <template v-if="editingTab === 'strategy'">
+                  <el-button @click="cancelEdit">取消</el-button>
+                  <el-button type="primary" @click="saveStrategy">保存</el-button>
+                </template>
+                <el-button
+                  v-else
+                  type="primary"
+                  :icon="EditIcon"
+                  @click="startEditStrategy"
+                >
+                  编辑
+                </el-button>
+              </div>
+            </div>
+
+            <el-descriptions
+              v-if="editingTab !== 'strategy'"
+              :column="3"
+              border
+              label-width="140px"
+            >
+              <el-descriptions-item label="限流 QPS">
+                {{ detail.qps }}
+              </el-descriptions-item>
+              <el-descriptions-item label="日调用上限">
+                {{ detail.dailyLimit.toLocaleString() }}
+              </el-descriptions-item>
+              <el-descriptions-item label="并发数">
+                {{ detail.concurrency }}
+              </el-descriptions-item>
+              <el-descriptions-item label="失败重试次数">
+                {{ detail.retryTimes }}
+              </el-descriptions-item>
+              <el-descriptions-item label="重试间隔">
+                {{ detail.retryInterval }} ms
+              </el-descriptions-item>
+              <el-descriptions-item label="结果缓存 TTL">
+                {{ detail.cacheTtl ? `${detail.cacheTtl} s` : "不缓存" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="熔断阈值">
+                {{ detail.breakerThreshold }} 次
+              </el-descriptions-item>
+              <el-descriptions-item label="熔断恢复时间">
+                {{ detail.breakerRecoverMin }} 分钟
+              </el-descriptions-item>
+              <el-descriptions-item label="告警接收人">
+                {{ detail.alarmReceiver || "-" }}
+              </el-descriptions-item>
+            </el-descriptions>
+
+            <el-form
+              v-else-if="strategyForm"
+              :model="strategyForm"
+              label-width="140px"
+              class="edit-form"
+            >
+              <el-row :gutter="16">
+                <el-col :span="8">
+                  <el-form-item label="限流 QPS">
+                    <el-input-number
+                      v-model="strategyForm.qps"
+                      :min="1"
+                      controls-position="right"
+                      class="num"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="日调用上限">
+                    <el-input-number
+                      v-model="strategyForm.dailyLimit"
+                      :min="0"
+                      :step="1000"
+                      controls-position="right"
+                      class="num"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="并发数">
+                    <el-input-number
+                      v-model="strategyForm.concurrency"
+                      :min="1"
+                      controls-position="right"
+                      class="num"
+                    />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="8">
+                  <el-form-item label="失败重试次数">
+                    <el-input-number
+                      v-model="strategyForm.retryTimes"
+                      :min="0"
+                      :max="5"
+                      controls-position="right"
+                      class="num"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="重试间隔">
+                    <el-input-number
+                      v-model="strategyForm.retryInterval"
+                      :min="0"
+                      :step="100"
+                      controls-position="right"
+                      class="num"
+                    />
+                    <span class="unit">ms</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="结果缓存 TTL">
+                    <el-input-number
+                      v-model="strategyForm.cacheTtl"
+                      :min="0"
+                      :step="60"
+                      controls-position="right"
+                      class="num"
+                    />
+                    <span class="unit">秒</span>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="8">
+                  <el-form-item label="熔断阈值">
+                    <el-input-number
+                      v-model="strategyForm.breakerThreshold"
+                      :min="1"
+                      controls-position="right"
+                      class="num"
+                    />
+                    <span class="unit">次</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="熔断恢复时间">
+                    <el-input-number
+                      v-model="strategyForm.breakerRecoverMin"
+                      :min="1"
+                      controls-position="right"
+                      class="num"
+                    />
+                    <span class="unit">分钟</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="告警接收人">
+                    <el-input
+                      v-model="strategyForm.alarmReceiver"
+                      placeholder="邮箱或用户名"
+                    />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </el-form>
+          </el-tab-pane>
+
+          <!-- 计费与额度 -->
+          <el-tab-pane label="计费与额度" name="billing">
+            <div class="tab-bar">
+              <span class="tab-tip">计费方式、套餐额度与结算信息</span>
+              <div>
+                <template v-if="editingTab === 'billing'">
+                  <el-button @click="cancelEdit">取消</el-button>
+                  <el-button type="primary" @click="saveBilling">保存</el-button>
+                </template>
+                <el-button
+                  v-else
+                  type="primary"
+                  :icon="EditIcon"
+                  @click="startEditBilling"
+                >
+                  编辑
+                </el-button>
+              </div>
+            </div>
+
+            <el-descriptions
+              v-if="editingTab !== 'billing'"
+              :column="2"
+              border
+              label-width="140px"
+            >
+              <el-descriptions-item label="计费方式">
+                {{
+                  billingTypeOptions.find(
+                    item => item.value === detail.billingType
+                  )?.label
+                }}
+              </el-descriptions-item>
+              <el-descriptions-item label="默认单价">
+                {{ detail.unitPrice }} 元/次
+              </el-descriptions-item>
+              <el-descriptions-item label="套餐总量">
+                {{ detail.quotaTotal.toLocaleString() }}
+              </el-descriptions-item>
+              <el-descriptions-item label="已用额度">
+                {{ detail.quotaUsed.toLocaleString() }}
+              </el-descriptions-item>
+              <el-descriptions-item label="剩余额度">
+                {{ remainQuota.toLocaleString() }}
+              </el-descriptions-item>
+              <el-descriptions-item label="预警阈值">
+                剩余低于 {{ detail.warnThreshold }}% 时告警
+              </el-descriptions-item>
+              <el-descriptions-item label="结算周期">
+                {{
+                  settleTypeOptions.find(item => item.value === detail.settleType)
+                    ?.label
+                }}
+              </el-descriptions-item>
+              <el-descriptions-item label="账户余额">
+                {{ detail.balance.toLocaleString() }} 元
+              </el-descriptions-item>
+              <el-descriptions-item label="合同编号">
+                {{ detail.contractNo || "-" }}
+              </el-descriptions-item>
+              <el-descriptions-item label="额度使用率">
+                {{ quotaUsedPercent }}%
+              </el-descriptions-item>
+            </el-descriptions>
+
+            <el-form
+              v-else-if="billingForm"
+              :model="billingForm"
+              label-width="140px"
+              class="edit-form"
+            >
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="计费方式">
+                    <el-select v-model="billingForm.billingType" class="w-full">
+                      <el-option
+                        v-for="item in billingTypeOptions"
+                        :key="item.value"
+                        :label="item.label"
+                        :value="item.value"
+                      />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="默认单价">
+                    <el-input-number
+                      v-model="billingForm.unitPrice"
+                      :min="0"
+                      :precision="2"
+                      :step="0.1"
+                      controls-position="right"
+                      class="num"
+                    />
+                    <span class="unit">元/次</span>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="8">
+                  <el-form-item label="套餐总量">
+                    <el-input-number
+                      v-model="billingForm.quotaTotal"
+                      :min="0"
+                      :step="1000"
+                      controls-position="right"
+                      class="num"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="已用额度">
+                    <el-input-number
+                      v-model="billingForm.quotaUsed"
+                      :min="0"
+                      :step="100"
+                      controls-position="right"
+                      class="num"
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="预警阈值">
+                    <el-input-number
+                      v-model="billingForm.warnThreshold"
+                      :min="0"
+                      :max="100"
+                      controls-position="right"
+                      class="num"
+                    />
+                    <span class="unit">%</span>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="8">
+                  <el-form-item label="结算周期">
+                    <el-select v-model="billingForm.settleType" class="w-full">
+                      <el-option
+                        v-for="item in settleTypeOptions"
+                        :key="item.value"
+                        :label="item.label"
+                        :value="item.value"
+                      />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="账户余额">
+                    <el-input-number
+                      v-model="billingForm.balance"
+                      :min="0"
+                      :precision="2"
+                      :step="100"
+                      controls-position="right"
+                      class="num"
+                    />
+                    <span class="unit">元</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="合同编号">
+                    <el-input
+                      v-model="billingForm.contractNo"
+                      placeholder="如 HT-2026-0118"
+                    />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </el-form>
+
+            <el-progress
+              v-if="detail.quotaTotal"
+              class="mt-4"
+              :percentage="quotaUsedPercent"
+              :status="
+                quotaUsedPercent >= 100 - detail.warnThreshold
+                  ? 'warning'
+                  : 'success'
+              "
+            />
+          </el-tab-pane>
+
+          <!-- 认证与鉴权 -->
           <el-tab-pane label="认证与鉴权" name="auth">
-            <div class="flex items-center justify-between mb-3">
-              <span class="text-sm text-gray-500">
+            <div class="tab-bar">
+              <span class="tab-tip">
                 同一个合作方可配置多种鉴权方式，由接口按需引用
               </span>
               <el-button type="primary" :icon="AddIcon" @click="openCreateAuth">
@@ -426,164 +956,6 @@ async function removeInterface(row: PartnerInterfaceItem) {
               </el-table-column>
             </el-table>
           </el-tab-pane>
-
-          <!-- 4 调用策略 -->
-          <el-tab-pane label="调用策略" name="strategy">
-            <el-descriptions :column="3" border label-width="140px">
-              <el-descriptions-item label="限流 QPS">
-                {{ detail.qps }}
-              </el-descriptions-item>
-              <el-descriptions-item label="日调用上限">
-                {{ detail.dailyLimit.toLocaleString() }}
-              </el-descriptions-item>
-              <el-descriptions-item label="并发数">
-                {{ detail.concurrency }}
-              </el-descriptions-item>
-              <el-descriptions-item label="失败重试次数">
-                {{ detail.retryTimes }}
-              </el-descriptions-item>
-              <el-descriptions-item label="重试间隔">
-                {{ detail.retryInterval }} ms
-              </el-descriptions-item>
-              <el-descriptions-item label="结果缓存 TTL">
-                {{ detail.cacheTtl ? `${detail.cacheTtl} s` : "不缓存" }}
-              </el-descriptions-item>
-              <el-descriptions-item label="熔断阈值">
-                {{ detail.breakerThreshold }} 次
-              </el-descriptions-item>
-              <el-descriptions-item label="熔断恢复时间">
-                {{ detail.breakerRecoverMin }} 分钟
-              </el-descriptions-item>
-              <el-descriptions-item label="告警接收人">
-                {{ detail.alarmReceiver || "-" }}
-              </el-descriptions-item>
-            </el-descriptions>
-          </el-tab-pane>
-
-          <!-- 5 计费与额度 -->
-          <el-tab-pane label="计费与额度" name="billing">
-            <el-descriptions :column="2" border label-width="140px">
-              <el-descriptions-item label="计费方式">
-                {{
-                  {
-                    per_call: "按次计费",
-                    package: "套餐包",
-                    yearly: "包年",
-                    free: "免费"
-                  }[detail.billingType]
-                }}
-              </el-descriptions-item>
-              <el-descriptions-item label="默认单价">
-                {{ detail.unitPrice }} 元/次
-              </el-descriptions-item>
-              <el-descriptions-item label="套餐总量">
-                {{ detail.quotaTotal.toLocaleString() }}
-              </el-descriptions-item>
-              <el-descriptions-item label="已用额度">
-                {{ detail.quotaUsed.toLocaleString() }}
-              </el-descriptions-item>
-              <el-descriptions-item label="剩余额度">
-                {{ remainQuota.toLocaleString() }}
-              </el-descriptions-item>
-              <el-descriptions-item label="预警阈值">
-                剩余低于 {{ detail.warnThreshold }}% 时告警
-              </el-descriptions-item>
-              <el-descriptions-item label="结算周期">
-                {{ detail.settleType === "monthly" ? "月结" : "预付充值" }}
-              </el-descriptions-item>
-              <el-descriptions-item label="账户余额">
-                {{ detail.balance.toLocaleString() }} 元
-              </el-descriptions-item>
-              <el-descriptions-item label="合同编号">
-                {{ detail.contractNo || "-" }}
-              </el-descriptions-item>
-              <el-descriptions-item label="额度使用率">
-                {{ quotaUsedPercent }}%
-              </el-descriptions-item>
-            </el-descriptions>
-            <el-progress
-              v-if="detail.quotaTotal"
-              class="mt-4"
-              :percentage="quotaUsedPercent"
-              :status="
-                quotaUsedPercent >= 100 - detail.warnThreshold
-                  ? 'warning'
-                  : 'success'
-              "
-            />
-          </el-tab-pane>
-
-          <!-- 6 接口能力清单 -->
-          <el-tab-pane label="接口能力清单" name="interfaces">
-            <div class="flex items-center justify-between mb-3">
-              <span class="text-sm text-gray-500">
-                只配置与公共配置不同的部分，请求方式、报文格式、独立参数均按接口单独设置
-              </span>
-              <el-button
-                type="primary"
-                :icon="AddIcon"
-                @click="openCreateInterface"
-              >
-                新增接口
-              </el-button>
-            </div>
-            <el-table
-              :data="detail.interfaces"
-              border
-              size="small"
-              empty-text="尚未配置接口"
-            >
-              <el-table-column prop="name" label="能力名称" min-width="160" />
-              <el-table-column prop="path" label="接口路径" min-width="200">
-                <template #default="{ row }">
-                  <span class="font-mono text-xs">{{ row.path }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="method" label="方式" width="80" />
-              <el-table-column label="报文格式" width="100">
-                <template #default="{ row }">
-                  {{ row.payloadFormat.toUpperCase() }}
-                </template>
-              </el-table-column>
-              <el-table-column label="引用鉴权" min-width="150">
-                <template #default="{ row }">
-                  {{ authName(row.authId) }}
-                </template>
-              </el-table-column>
-              <el-table-column label="单价" width="100" align="right">
-                <template #default="{ row }">
-                  {{ row.price ? `${row.price} 元` : "免费" }}
-                </template>
-              </el-table-column>
-              <el-table-column label="日上限" width="110" align="right">
-                <template #default="{ row }">
-                  {{ row.dailyLimit?.toLocaleString() ?? "-" }}
-                </template>
-              </el-table-column>
-              <el-table-column label="状态" width="90" align="center">
-                <template #default="{ row }">
-                  <el-tag :type="row.enabled ? 'success' : 'info'">
-                    {{ row.enabled ? "启用" : "停用" }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="最近调用" min-width="170">
-                <template #default="{ row }">
-                  {{ row.lastCallTime || "-" }}
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="140" align="center" fixed="right">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="openEditInterface(row)">
-                    编辑
-                  </el-button>
-                  <el-button link type="danger" @click="removeInterface(row)">
-                    删除
-                  </el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-tab-pane>
         </el-tabs>
       </el-card>
 
@@ -591,12 +963,6 @@ async function removeInterface(row: PartnerInterfaceItem) {
         v-model="authDialogVisible"
         :editing="editingAuth"
         @submit="saveAuth"
-      />
-      <InterfaceDialog
-        v-model="interfaceDialogVisible"
-        :editing="editingInterface"
-        :auth-options="detail.authConfigs"
-        @submit="saveInterface"
       />
     </template>
 
@@ -619,11 +985,52 @@ async function removeInterface(row: PartnerInterfaceItem) {
   }
 }
 
+.tab-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.tab-tip {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
 .section-title {
   margin: 16px 0 8px;
   font-size: 14px;
   font-weight: 500;
   color: var(--el-text-color-primary);
+}
+
+.edit-form {
+  max-width: 1180px;
+}
+
+.num {
+  width: 140px;
+}
+
+.unit {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.kv-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.kv-key {
+  width: 240px;
+}
+
+.kv-value {
+  max-width: 420px;
 }
 
 .font-mono {
