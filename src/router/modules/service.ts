@@ -17,7 +17,8 @@ export default {
       component: () => import("@/views/service/partners/index.vue"),
       meta: {
         icon: "ri/team-line",
-        title: "合作方"
+        title: "合作方",
+        showParent: true
       }
     }
   ]
