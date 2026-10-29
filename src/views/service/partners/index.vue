@@ -41,12 +41,19 @@ const pagination = reactive({
 
 const columns: TableColumnList = [
   { type: "selection", width: 55, align: "left" },
-  { label: "名称", prop: "name", minWidth: 160, showOverflowTooltip: true },
-  { label: "编码", prop: "code", width: 140 },
-  { label: "联系人", prop: "contact", width: 120 },
-  { label: "联系电话", prop: "phone", width: 150 },
-  { label: "状态", prop: "status", width: 100, slot: "status" },
-  { label: "创建时间", prop: "createTime", width: 180 },
+  {
+    label: "名称",
+    prop: "name",
+    minWidth: 200,
+    align: "left",
+    headerAlign: "left",
+    showOverflowTooltip: true
+  },
+  { label: "编码", prop: "code", minWidth: 120 },
+  { label: "联系人", prop: "contact", minWidth: 110 },
+  { label: "联系电话", prop: "phone", minWidth: 140 },
+  { label: "状态", prop: "status", minWidth: 100, slot: "status" },
+  { label: "创建时间", prop: "createTime", minWidth: 170 },
   { label: "操作", fixed: "right", width: 150, slot: "operation" }
 ];
 
