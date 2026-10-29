@@ -45,8 +45,6 @@ const columns: TableColumnList = [
     label: "名称",
     prop: "name",
     minWidth: 200,
-    align: "left",
-    headerAlign: "left",
     showOverflowTooltip: true
   },
   { label: "编码", prop: "code", minWidth: 120 },
