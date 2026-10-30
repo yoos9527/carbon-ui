@@ -4,17 +4,27 @@ import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type FormInstance } from "element-plus";
 import {
   createEmptyPartner,
-  getPartnerTypeLabel,
+  deletePartners,
   getStatusOption,
+  togglePartnerStatus,
   mockPartners,
   type PartnerItem
 } from "./data";
+import {
+  applyImport,
+  planImport,
+  toCsv,
+  toCsvTemplate,
+  type ImportPlan
+} from "./csv";
 import { PureTableBar } from "@/components/RePureTableBar";
 import SearchIcon from "~icons/ri/search-line";
 import RefreshIcon from "~icons/ri/refresh-line";
 import AddIcon from "~icons/ri/add-line";
 import EditIcon from "~icons/ri/edit-line";
 import DeleteIcon from "~icons/ri/delete-bin-line";
+import UploadIcon from "~icons/ri/upload-2-line";
+import DownloadIcon from "~icons/ri/download-2-line";
 
 /** 组件 name 必须与路由 name 一致，否则标签页缓存（keepAlive）失效 */
 defineOptions({ name: "ServicePartners" });
@@ -27,6 +37,7 @@ type PartnerForm = Pick<
 const router = useRouter();
 const loading = ref(false);
 const dataList = ref<PartnerItem[]>([]);
+const totalRows = ref<PartnerItem[]>([]);
 
 const queryForm = reactive({
   name: "",
@@ -50,7 +61,6 @@ const columns: TableColumnList = [
     showOverflowTooltip: true
   },
   { label: "编码", prop: "code", minWidth: 120 },
-  { label: "类型", prop: "types", minWidth: 160, slot: "types" },
   { label: "联系人", prop: "contact", minWidth: 110 },
   { label: "联系电话", prop: "phone", minWidth: 140 },
   {
@@ -61,7 +71,7 @@ const columns: TableColumnList = [
   },
   { label: "状态", prop: "status", minWidth: 100, slot: "status" },
   { label: "创建时间", prop: "createTime", minWidth: 170 },
-  { label: "操作", fixed: "right", width: 150, slot: "operation" }
+  { label: "操作", fixed: "right", width: 250, slot: "operation" }
 ];
 
 /**
@@ -79,6 +89,7 @@ function loadData() {
       queryForm.status === undefined || item.status === queryForm.status;
     return matchName && matchStatus;
   });
+  totalRows.value = filtered;
   pagination.total = filtered.length;
   const start = (pagination.currentPage - 1) * pagination.pageSize;
   dataList.value = filtered.slice(start, start + pagination.pageSize);
@@ -165,6 +176,31 @@ function handleEdit(row: PartnerItem) {
   dialogVisible.value = true;
 }
 
+/** 启用 / 停用：停用会连带拒绝该合作方下所有接口的调用，所以先确认 */
+function handleToggle(row: PartnerItem) {
+  const action = row.status === 1 ? "停用" : "启用";
+  const run = () => {
+    // TODO: 换成真实状态接口
+    if (!togglePartnerStatus(row.id)) {
+      ElMessage.error("合作方不存在，可能已被删除");
+      return;
+    }
+    loadData();
+    ElMessage.success(`已${action}`);
+  };
+  if (action === "停用") {
+    ElMessageBox.confirm(
+      `停用后「${row.name}」下的接口将拒绝新的调用请求，确认停用？`,
+      "停用合作方",
+      { type: "warning" }
+    )
+      .then(run)
+      .catch(() => {});
+    return;
+  }
+  run();
+}
+
 function handleDelete(row: PartnerItem) {
   ElMessageBox.confirm(`确认删除合作方「${row.name}」？`, "删除确认", {
     type: "warning"
@@ -208,6 +244,111 @@ async function submitForm() {
   loadData();
 }
 
+/* ------------------------------ 批量选择 ------------------------------ */
+
+const selectedRows = ref<PartnerItem[]>([]);
+
+function handleSelectionChange(rows: PartnerItem[]) {
+  selectedRows.value = rows;
+}
+
+function handleBatchDelete() {
+  const rows = selectedRows.value;
+  if (!rows.length) {
+    ElMessage.warning("请先勾选要删除的合作方");
+    return;
+  }
+  const preview = rows
+    .slice(0, 3)
+    .map(item => `「${item.name}」`)
+    .join("、");
+  const suffix = rows.length > 3 ? ` 等 ${rows.length} 个` : "";
+  ElMessageBox.confirm(
+    `将删除 ${preview}${suffix}，其下接口会一并消失，且不可恢复。`,
+    `批量删除 ${rows.length} 个合作方`,
+    {
+      type: "warning",
+      confirmButtonText: "全部删除",
+      confirmButtonClass: "el-button--danger"
+    }
+  )
+    .then(() => {
+      const removed = deletePartners(rows.map(item => item.id));
+      selectedRows.value = [];
+      if (dataList.value.length === 1 && pagination.currentPage > 1) {
+        pagination.currentPage -= 1;
+      }
+      loadData();
+      ElMessage.success(
+        removed ? `已删除 ${removed} 个合作方` : "没有可删除的合作方"
+      );
+    })
+    .catch(() => {});
+}
+
+/* ------------------------------ 导入 / 导出 ------------------------------ */
+
+function download(content: string, filename: string) {
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function handleExport() {
+  const rows = totalRows.value;
+  if (!rows.length) {
+    ElMessage.warning("当前筛选下没有可导出的合作方");
+    return;
+  }
+  const stamp = new Date().toISOString().slice(0, 10);
+  download(toCsv(rows), `合作方清单-${stamp}.csv`);
+  ElMessage.success(`已导出 ${rows.length} 条`);
+}
+
+function handleTemplate() {
+  download(toCsvTemplate(), "合作方清单-导入模板.csv");
+}
+
+const importVisible = ref(false);
+const importFileName = ref("");
+const importPlan = ref<ImportPlan | null>(null);
+const importReading = ref(false);
+
+function openImport() {
+  importVisible.value = true;
+  importFileName.value = "";
+  importPlan.value = null;
+}
+
+async function handleImportFile(file: { raw?: File }) {
+  const raw = file.raw;
+  if (!raw) return;
+  importReading.value = true;
+  try {
+    importFileName.value = raw.name;
+    importPlan.value = planImport(await raw.text());
+  } catch (error) {
+    ElMessage.error(`读取文件失败：${(error as Error).message}`);
+  } finally {
+    importReading.value = false;
+  }
+}
+
+function confirmImport() {
+  const plan = importPlan.value;
+  if (!plan || !plan.plan.length) return;
+  applyImport(plan.plan);
+  importVisible.value = false;
+  loadData();
+  ElMessage.success(
+    `导入完成：新增 ${plan.created} 条，更新 ${plan.updated} 条`
+  );
+}
+
 loadData();
 </script>
 
@@ -241,11 +382,11 @@ loadData();
         </el-select>
       </el-form-item>
       <el-form-item>
-        <el-button type="primary" @click="onSearch">
+        <el-button type="primary" plain @click="onSearch">
           <template #icon><SearchIcon /></template>
           查询
         </el-button>
-        <el-button @click="onReset">
+        <el-button plain @click="onReset">
           <template #icon><RefreshIcon /></template>
           重置
         </el-button>
@@ -255,9 +396,21 @@ loadData();
     <PureTableBar :columns="columns" @refresh="onSearch">
       <template #title><span /></template>
       <template #buttons>
-        <el-button type="primary" @click="handleAdd">
+        <el-button type="primary" plain @click="handleAdd">
           <template #icon><AddIcon /></template>
           新增
+        </el-button>
+        <el-button type="danger" plain @click="handleBatchDelete">
+          <template #icon><DeleteIcon /></template>
+          批量删除{{ selectedRows.length ? `（${selectedRows.length}）` : "" }}
+        </el-button>
+        <el-button plain @click="openImport">
+          <template #icon><UploadIcon /></template>
+          导入
+        </el-button>
+        <el-button plain @click="handleExport">
+          <template #icon><DownloadIcon /></template>
+          导出
         </el-button>
       </template>
       <template v-slot="{ size, dynamicColumns }">
@@ -275,6 +428,7 @@ loadData();
           :loading="loading"
           :row-style="{ cursor: 'pointer' }"
           @row-click="handleRowClick"
+          @selection-change="handleSelectionChange"
           @page-size-change="handleSizeChange"
           @page-current-change="handleCurrentChange"
         >
@@ -287,18 +441,6 @@ loadData();
               {{ row.name }}
             </el-link>
           </template>
-          <template #types="{ row }">
-            <el-tag
-              v-for="type in row.types"
-              :key="type"
-              size="small"
-              effect="plain"
-              class="mr-1"
-            >
-              {{ getPartnerTypeLabel(type) }}
-            </el-tag>
-            <span v-if="!row.types?.length">-</span>
-          </template>
           <template #interfaceCount="{ row }">
             {{ row.interfaces?.length ?? 0 }}
           </template>
@@ -309,19 +451,29 @@ loadData();
           </template>
           <template #operation="{ row }">
             <el-button
-              link
+              size="small"
+              plain
               type="primary"
-              :icon="EditIcon"
               @click.stop="handleEdit(row)"
             >
+              <template #icon><EditIcon /></template>
               编辑
             </el-button>
             <el-button
-              link
+              size="small"
+              plain
+              :type="row.status === 1 ? 'danger' : 'success'"
+              @click.stop="handleToggle(row)"
+            >
+              {{ row.status === 1 ? "停用" : "启用" }}
+            </el-button>
+            <el-button
+              size="small"
+              plain
               type="danger"
-              :icon="DeleteIcon"
               @click.stop="handleDelete(row)"
             >
+              <template #icon><DeleteIcon /></template>
               删除
             </el-button>
           </template>
@@ -357,6 +509,64 @@ loadData();
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="importVisible" title="导入合作方" width="620px">
+      <div class="imp">
+        <div class="imp__step">
+          <span class="imp__label">1. 准备文件</span>
+          <span class="imp__hint">
+            按「编码」匹配：命中就更新档案主字段，没命中就新建。鉴权与接口不在本次导入范围。
+          </span>
+          <el-button link type="primary" @click="handleTemplate">
+            下载模板
+          </el-button>
+        </div>
+        <div class="imp__step">
+          <span class="imp__label">2. 选择文件</span>
+          <el-upload
+            :auto-upload="false"
+            :show-file-list="false"
+            accept=".csv,text/csv"
+            :on-change="handleImportFile"
+          >
+            <el-button :loading="importReading">
+              <template #icon><UploadIcon /></template>
+              选择 CSV
+            </el-button>
+          </el-upload>
+          <span v-if="importFileName" class="imp__file">
+            {{ importFileName }}
+          </span>
+        </div>
+        <div v-if="importPlan" class="imp__result">
+          <p class="imp__summary">
+            将新增 <b>{{ importPlan.created }}</b> 条、更新
+            <b>{{ importPlan.updated }}</b> 条；
+            <span :class="importPlan.issues.length ? 'is-bad' : 'is-ok'">
+              失败 {{ importPlan.issues.length }} 行
+            </span>
+          </p>
+          <ul v-if="importPlan.issues.length" class="imp__issues">
+            <li
+              v-for="item in importPlan.issues"
+              :key="`${item.line}-${item.message}`"
+            >
+              第 {{ item.line }} 行：{{ item.message }}
+            </li>
+          </ul>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="importVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :disabled="!importPlan || !importPlan.plan.length"
+          @click="confirmImport"
+        >
+          确认导入
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -370,5 +580,71 @@ loadData();
   margin-bottom: 16px;
   background: var(--el-bg-color);
   border-radius: 6px;
+}
+
+:global(.imp) {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+:global(.imp__step) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+:global(.imp__label) {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+:global(.imp__hint) {
+  flex: 1;
+  min-width: 240px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+
+:global(.imp__file) {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+}
+
+:global(.imp__result) {
+  padding: 10px 12px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 6px;
+}
+
+:global(.imp__summary) {
+  margin: 0;
+  font-size: 13px;
+}
+
+:global(.imp__summary b) {
+  font-variant-numeric: tabular-nums;
+}
+
+:global(.imp__summary .is-ok) {
+  color: var(--el-color-success);
+}
+
+:global(.imp__summary .is-bad) {
+  color: var(--el-color-danger);
+}
+
+:global(.imp__issues) {
+  max-height: 180px;
+  padding-left: 18px;
+  margin: 8px 0 0;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--el-color-danger);
 }
 </style>

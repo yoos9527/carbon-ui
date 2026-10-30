@@ -20,6 +20,16 @@ export default {
         title: "合作方",
         showParent: true
       }
+    },
+    {
+      path: "/service/interfaces",
+      name: "ServiceInterfaces",
+      component: () => import("@/views/service/interfaces/index.vue"),
+      meta: {
+        icon: "ri/route-line",
+        title: "接口管理",
+        showParent: true
+      }
     }
   ]
 } satisfies RouteConfigsTable;

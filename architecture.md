@@ -21,6 +21,7 @@ tags: [architecture]
 | --- | --- | --- |
 | 骨架运行时 | `src/router`、`src/layout`、`src/store`、`src/utils/{auth,http}`、`src/api`、`src/views/login` | [[skeleton-runtime]] |
 | 合作方接入档案 | `src/views/service/partners` | [[partners-integration]] |
+| 接口管理 | `src/views/service/interfaces` | [[interface-config]] |
 | 通用 UI 层 | `src/components`、`src/directives`、`src/plugins` | [[shared-ui]] |
 | 工程管道 | `build/`、`vite.config.ts`、`.env*`、`pnpm-workspace.yaml`、`public/platform-config.json` | [[build-pipeline]] |
 

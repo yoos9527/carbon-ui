@@ -353,15 +353,26 @@ function resetTemplate() {
   --muted: #8792a8;
   --line: #e6eaf2;
   --line-soft: #eef1f7;
+  --wash: #fafbfd;
 
   overflow: hidden;
   border-radius: 12px;
 }
 
+/* 暗色：只换变量 */
+:global(html.dark .auth-dlg) {
+  --ink: #e6ebf5;
+  --ink-2: #a7b2c7;
+  --muted: #7a879e;
+  --line: #262d3b;
+  --line-soft: #1e242f;
+  --wash: #1a2029;
+}
+
 :global(.auth-dlg .el-dialog__header) {
   padding: 20px 24px 16px;
   margin-right: 0;
-  border-bottom: 1px solid #eef1f7;
+  border-bottom: 1px solid var(--line-soft);
 }
 
 :global(.auth-dlg .el-dialog__body) {
@@ -377,8 +388,8 @@ function resetTemplate() {
 
 :global(.auth-dlg .el-dialog__footer) {
   padding: 14px 24px;
-  background: #fafbfd;
-  border-top: 1px solid #eef1f7;
+  background: var(--wash);
+  border-top: 1px solid var(--line-soft);
 }
 
 /* ------------------------------- 标题区 ------------------------------- */
@@ -617,7 +628,7 @@ function resetTemplate() {
     font-size: 12px;
     line-height: 1.8;
     color: var(--muted);
-    background: #fafbfd;
+    background: var(--wash);
     border: 1px solid var(--line-soft);
     border-radius: 6px;
   }

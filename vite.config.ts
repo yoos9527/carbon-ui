@@ -26,8 +26,9 @@ export default ({ mode }: ConfigEnv): UserConfigExport => {
       // 本地跨域代理 https://cn.vitejs.dev/config/server-options.html#server-proxy
       proxy: {},
       // 预热文件以提前转换和缓存结果，降低启动期间的初始页面加载时长并防止转换瀑布
+      // 必须限定到 .vue：src/**/SPEC.md 这类文件不在预热范围内，否则会被当成 JS 解析
       warmup: {
-        clientFiles: ["./index.html", "./src/{views,components}/*"]
+        clientFiles: ["./index.html", "./src/{views,components}/**/*.vue"]
       }
     },
     plugins: getPluginsList(VITE_CDN, VITE_COMPRESSION),

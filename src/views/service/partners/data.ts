@@ -4,18 +4,6 @@ export interface KV {
   value: string;
 }
 
-/** 服务商能力类型 */
-export type ProviderType =
-  | "business"
-  | "justice"
-  | "credit"
-  | "telecom"
-  | "tax"
-  | "map"
-  | "ocr"
-  | "sms"
-  | "other";
-
 /** 鉴权方式：header = 公共请求头（原环境与网络里的公共请求头迁入）；script = 自定义 Groovy 脚本 */
 export type AuthType = "header" | "script";
 
@@ -38,9 +26,52 @@ export interface AuthConfig {
   enabled: boolean;
 }
 
+/** 入参位置：header / query / path / body 四者互斥 */
+export type ParamLocation = "query" | "body" | "path" | "header";
+
+/** 字段类型（入参、出参共用一套） */
+export type FieldType =
+  | "string"
+  | "int"
+  | "long"
+  | "number"
+  | "boolean"
+  | "object"
+  | "array"
+  | "date";
+
+/** 请求入参字段 */
+export interface InterfaceParam {
+  id: number;
+  /** 参数名，同一接口内唯一 */
+  name: string;
+  location: ParamLocation;
+  type: FieldType;
+  required: boolean;
+  desc?: string;
+  /** 默认值：留空则不发送；填了必须符合 type，保存前会按类型校验 */
+  defaultValue?: string;
+}
+
+/** 响应出参字段。层级用 JSON 路径表达（`data.list[].name`），不搞树形行 */
+export interface InterfaceResponseField {
+  id: number;
+  /** 字段名，与 path 末段同名 */
+  name: string;
+  /** JSON 路径，如 data.entName / data.list[].name */
+  path: string;
+  type: FieldType;
+  /** 是否必返 */
+  required: boolean;
+  desc?: string;
+  example?: string;
+}
+
 /** 单个接口（能力）配置，只存与合作方公共配置不同的部分 */
 export interface PartnerInterfaceItem {
   id: number;
+  /** 业务编码，字母/数字/下划线，全局唯一，如 ENT_BASE_V1 */
+  code: string;
   /** 能力名称，如「企业工商基本信息」 */
   name: string;
   /** 接口路径，如 /api/ent/base */
@@ -49,16 +80,35 @@ export interface PartnerInterfaceItem {
   payloadFormat: "json" | "xml" | "form";
   /** 引用 AuthConfig.id */
   authId?: number;
-  /** 覆盖 / 追加鉴权配置里的请求头 */
-  extraHeaders: KV[];
-  /** 接口独有请求参数 */
-  extraParams: KV[];
+  /** 请求入参（含 header / query / path / body 四种位置） */
+  params: InterfaceParam[];
+  /** 响应出参字段 */
+  responses: InterfaceResponseField[];
+  /** 前置处理器：发起请求前的报文改写，'none' 表示不处理 */
+  preProcessor?: ProcessorType;
+  /** 后置处理器：拿到响应后的解包/映射，'none' 表示不处理 */
+  postProcessor?: ProcessorType;
   /** 覆盖合作方默认超时 */
   timeout?: number;
   price: number;
   dailyLimit?: number;
   enabled: boolean;
+  /** 建档时间；最后调用时间 `lastCallTime` 仍保留，用于排序与健康度 */
+  createTime?: string;
   lastCallTime?: string;
+}
+
+/** 一个接入环境。同一合作方常有 dev / sit / uat / prod 多套地址，故用列表而非固定字段 */
+export interface PartnerEnv {
+  id: number;
+  /** 环境名称，如「生产环境」 */
+  name: string;
+  /** 环境标识，如 prod / sit / dev，日志与告警里区分流量用 */
+  code: string;
+  /** 该环境的接入地址（baseUrl） */
+  baseUrl: string;
+  /** 备注，如「仅内网可访问」 */
+  remark?: string;
 }
 
 /** 合作方接入档案 */
@@ -66,7 +116,6 @@ export interface PartnerItem {
   id: number;
   name: string;
   code: string;
-  types: ProviderType[];
   scope: string[];
   website?: string;
   contact: string;
@@ -79,9 +128,8 @@ export interface PartnerItem {
   createTime: string;
   remark?: string;
 
-  /** 环境与网络（合作方公共） */
-  baseUrlProd: string;
-  baseUrlTest?: string;
+  /** 环境与网络（合作方公共）。envs 至少一条，第一条视为默认环境 */
+  envs: PartnerEnv[];
   charset: string;
   connectTimeout: number;
   readTimeout: number;
@@ -119,18 +167,6 @@ export interface PartnerItem {
 
 /* ------------------------------ 字典 ------------------------------ */
 
-export const providerTypeOptions: { label: string; value: ProviderType }[] = [
-  { label: "工商数据", value: "business" },
-  { label: "司法涉诉", value: "justice" },
-  { label: "征信数据", value: "credit" },
-  { label: "运营商", value: "telecom" },
-  { label: "税务", value: "tax" },
-  { label: "地图", value: "map" },
-  { label: "OCR 识别", value: "ocr" },
-  { label: "短信", value: "sms" },
-  { label: "其他", value: "other" }
-];
-
 export const scopeOptions = ["全国", "省级", "市级"];
 
 export const partnerStatusOptions: {
@@ -159,6 +195,32 @@ export const payloadFormatOptions = [
   { label: "Form", value: "form" }
 ];
 
+export type ProcessorType = "none" | "groovy";
+
+/** 前置/后置处理器：现阶段只有「不处理」和「Groovy 脚本」两种 */
+export const processorOptions: { label: string; value: ProcessorType }[] = [
+  { label: "不处理", value: "none" },
+  { label: "Groovy 脚本", value: "groovy" }
+];
+
+export const paramLocationOptions: { label: string; value: ParamLocation }[] = [
+  { label: "query", value: "query" },
+  { label: "body", value: "body" },
+  { label: "path", value: "path" },
+  { label: "header", value: "header" }
+];
+
+export const fieldTypeOptions: { label: string; value: FieldType }[] = [
+  { label: "string", value: "string" },
+  { label: "int", value: "int" },
+  { label: "long", value: "long" },
+  { label: "number", value: "number" },
+  { label: "boolean", value: "boolean" },
+  { label: "object", value: "object" },
+  { label: "array", value: "array" },
+  { label: "date", value: "date" }
+];
+
 export const billingTypeOptions = [
   { label: "按次计费", value: "per_call" },
   { label: "套餐包", value: "package" },
@@ -177,10 +239,6 @@ export function getAuthTypeLabel(type: AuthType): string {
 
 export function getStatusOption(status: PartnerStatus) {
   return partnerStatusOptions.find(item => item.value === status);
-}
-
-export function getPartnerTypeLabel(type: ProviderType): string {
-  return providerTypeOptions.find(item => item.value === type)?.label ?? type;
 }
 
 /* --------------------------- 脚本默认内容 --------------------------- */
@@ -241,15 +299,22 @@ export function createEmptyAuth(): AuthConfig {
 export function createEmptyInterface(): PartnerInterfaceItem {
   return {
     id: nextId(),
+    code: "",
     name: "",
     path: "",
     method: "GET",
     payloadFormat: "json",
-    extraHeaders: [],
-    extraParams: [],
+    params: [],
+    responses: [],
+    preProcessor: "none",
+    postProcessor: "none",
     price: 0,
     enabled: true
   };
+}
+
+export function createEmptyEnv(): PartnerEnv {
+  return { id: nextId(), name: "", code: "", baseUrl: "" };
 }
 
 export function createEmptyPartner(): PartnerItem {
@@ -257,13 +322,12 @@ export function createEmptyPartner(): PartnerItem {
     id: nextId(),
     name: "",
     code: "",
-    types: [],
     scope: ["全国"],
     contact: "",
     phone: "",
     status: 2,
     createTime: "",
-    baseUrlProd: "",
+    envs: [{ ...createEmptyEnv(), name: "生产环境", code: "prod" }],
     charset: "UTF-8",
     connectTimeout: 3000,
     readTimeout: 5000,
@@ -296,7 +360,6 @@ export const mockPartners: PartnerItem[] = [
     id: 1,
     name: "中科数据科技有限公司",
     code: "PT-0001",
-    types: ["business", "justice"],
     scope: ["全国"],
     website: "https://www.qcc-like.com",
     contact: "张伟",
@@ -308,8 +371,27 @@ export const mockPartners: PartnerItem[] = [
     cooperateEnd: "2027-12-31",
     createTime: "2026-01-08 09:12:00",
     remark: "工商 + 司法涉诉主供应商，季度对账",
-    baseUrlProd: "https://api.zkdata.com",
-    baseUrlTest: "https://api-test.zkdata.com",
+    envs: [
+      {
+        id: 101,
+        name: "生产环境",
+        code: "prod",
+        baseUrl: "https://api.zkdata.com"
+      },
+      {
+        id: 102,
+        name: "测试环境",
+        code: "test",
+        baseUrl: "https://api-test.zkdata.com"
+      },
+      {
+        id: 103,
+        name: "集成环境",
+        code: "sit",
+        baseUrl: "https://api-sit.zkdata.com",
+        remark: "联调用，仅内网可访问"
+      }
+    ],
     authConfigs: [
       {
         id: 11,
@@ -352,44 +434,195 @@ export const mockPartners: PartnerItem[] = [
     interfaces: [
       {
         id: 101,
+        code: "ZK_ENT_BASE",
         name: "企业工商基本信息",
         path: "/api/ent/base",
         method: "GET",
         payloadFormat: "json",
         authId: 11,
-        extraHeaders: [],
-        extraParams: [],
+        params: [
+          {
+            id: 10101,
+            name: "keyword",
+            location: "query",
+            type: "string",
+            required: true,
+            desc: "企业名称或统一社会信用代码",
+            defaultValue: "阿里巴巴（中国）有限公司"
+          },
+          {
+            id: 10102,
+            name: "X-Request-Id",
+            location: "header",
+            type: "string",
+            required: false,
+            desc: "调用方请求追踪号"
+          }
+        ],
+        responses: [
+          {
+            id: 10103,
+            name: "entName",
+            path: "data.entName",
+            type: "string",
+            required: true,
+            desc: "企业名称",
+            example: "阿里巴巴（中国）有限公司"
+          },
+          {
+            id: 10104,
+            name: "regNo",
+            path: "data.regNo",
+            type: "string",
+            required: true,
+            desc: "统一社会信用代码"
+          },
+          {
+            id: 10105,
+            name: "regCapital",
+            path: "data.regCapital",
+            type: "number",
+            required: false,
+            desc: "注册资本（万元）"
+          },
+          {
+            id: 10106,
+            name: "status",
+            path: "data.status",
+            type: "string",
+            required: true,
+            desc: "经营状态"
+          }
+        ],
         price: 0.5,
         dailyLimit: 10000,
         enabled: true,
+        createTime: "2025-11-03 09:10:00",
         lastCallTime: "2026-10-29 14:22:10"
       },
       {
         id: 102,
+        code: "ZK_ENT_PARTNER",
         name: "股东信息",
         path: "/api/ent/partner",
         method: "GET",
         payloadFormat: "json",
         authId: 11,
-        extraHeaders: [],
-        extraParams: [],
+        params: [
+          {
+            id: 10201,
+            name: "keyword",
+            location: "query",
+            type: "string",
+            required: true,
+            desc: "企业名称或统一社会信用代码"
+          },
+          {
+            id: 10202,
+            name: "pageSize",
+            location: "query",
+            type: "int",
+            required: false,
+            desc: "返回条数，默认 20",
+            defaultValue: "20"
+          }
+        ],
+        responses: [
+          {
+            id: 10203,
+            name: "name",
+            path: "data.list[].name",
+            type: "string",
+            required: true,
+            desc: "股东名称"
+          },
+          {
+            id: 10204,
+            name: "ratio",
+            path: "data.list[].ratio",
+            type: "number",
+            required: false,
+            desc: "持股比例（%）"
+          },
+          {
+            id: 10205,
+            name: "total",
+            path: "data.total",
+            type: "int",
+            required: true,
+            desc: "总条数"
+          }
+        ],
         price: 0.8,
         dailyLimit: 5000,
         enabled: true,
+        createTime: "2025-11-03 09:40:00",
         lastCallTime: "2026-10-29 11:03:42"
       },
       {
         id: 103,
+        code: "ZK_ENT_LAWSUIT",
         name: "司法涉诉",
         path: "/api/ent/lawsuit",
         method: "POST",
         payloadFormat: "json",
         authId: 12,
-        extraHeaders: [{ key: "X-Trace", value: "on" }],
-        extraParams: [{ key: "needDetail", value: "1" }],
+        params: [
+          {
+            id: 10301,
+            name: "regNo",
+            location: "body",
+            type: "string",
+            required: true,
+            desc: "统一社会信用代码"
+          },
+          {
+            id: 10302,
+            name: "needDetail",
+            location: "body",
+            type: "boolean",
+            required: false,
+            desc: "是否返回案件详情"
+          },
+          {
+            id: 10303,
+            name: "X-Trace",
+            location: "header",
+            type: "string",
+            required: false,
+            desc: "溯源开关"
+          }
+        ],
+        responses: [
+          {
+            id: 10304,
+            name: "caseNo",
+            path: "data.list[].caseNo",
+            type: "string",
+            required: true,
+            desc: "案号"
+          },
+          {
+            id: 10305,
+            name: "cause",
+            path: "data.list[].cause",
+            type: "string",
+            required: false,
+            desc: "案由"
+          },
+          {
+            id: 10306,
+            name: "count",
+            path: "data.count",
+            type: "int",
+            required: true,
+            desc: "命中数量"
+          }
+        ],
         price: 1.2,
         dailyLimit: 2000,
         enabled: false,
+        createTime: "2025-11-12 15:20:00",
         lastCallTime: "2026-10-20 09:15:00"
       }
     ]
@@ -399,7 +632,6 @@ export const mockPartners: PartnerItem[] = [
     id: 2,
     name: "企信通信息服务有限公司",
     code: "PT-0002",
-    types: ["business", "credit"],
     scope: ["全国", "省级"],
     website: "https://www.qixintong.com",
     contact: "李娜",
@@ -410,8 +642,20 @@ export const mockPartners: PartnerItem[] = [
     cooperateEnd: "2027-01-31",
     createTime: "2026-02-12 10:20:00",
     remark: "接口签名规则复杂，使用 Groovy 脚本完成鉴权",
-    baseUrlProd: "https://open.qixintong.com",
-    baseUrlTest: "https://open-test.qixintong.com",
+    envs: [
+      {
+        id: 111,
+        name: "生产环境",
+        code: "prod",
+        baseUrl: "https://open.qixintong.com"
+      },
+      {
+        id: 112,
+        name: "测试环境",
+        code: "test",
+        baseUrl: "https://open-test.qixintong.com"
+      }
+    ],
     authConfigs: [
       {
         id: 21,
@@ -441,30 +685,102 @@ export const mockPartners: PartnerItem[] = [
     interfaces: [
       {
         id: 201,
+        code: "QXT_ENT_BASE",
         name: "企业工商基本信息",
         path: "/open/ent/base",
         method: "GET",
         payloadFormat: "json",
         authId: 21,
-        extraHeaders: [],
-        extraParams: [],
+        params: [
+          {
+            id: 20101,
+            name: "keyword",
+            location: "query",
+            type: "string",
+            required: true,
+            desc: "企业名称 / 信用代码 / 注册号"
+          },
+          {
+            id: 20102,
+            name: "apiVersion",
+            location: "query",
+            type: "string",
+            required: false,
+            desc: "固定 v2"
+          }
+        ],
+        responses: [
+          {
+            id: 20103,
+            name: "entName",
+            path: "data.entName",
+            type: "string",
+            required: true,
+            desc: "企业名称"
+          },
+          {
+            id: 20104,
+            name: "creditCode",
+            path: "data.creditCode",
+            type: "string",
+            required: true,
+            desc: "统一社会信用代码"
+          }
+        ],
         price: 0.35,
         dailyLimit: 20000,
         enabled: true,
+        createTime: "2025-12-01 10:05:00",
         lastCallTime: "2026-10-29 13:40:05"
       },
       {
         id: 202,
+        code: "QXT_CREDIT_SCORE",
         name: "企业信用评分",
         path: "/open/ent/creditScore",
         method: "GET",
         payloadFormat: "json",
         authId: 21,
-        extraHeaders: [],
-        extraParams: [],
+        params: [
+          {
+            id: 20201,
+            name: "regNo",
+            location: "query",
+            type: "string",
+            required: true,
+            desc: "统一社会信用代码"
+          }
+        ],
+        responses: [
+          {
+            id: 20202,
+            name: "score",
+            path: "data.score",
+            type: "int",
+            required: true,
+            desc: "信用分 0-1000"
+          },
+          {
+            id: 20203,
+            name: "level",
+            path: "data.level",
+            type: "string",
+            required: false,
+            desc: "等级 A/B/C/D"
+          },
+          {
+            id: 20204,
+            name: "updatedAt",
+            path: "data.updatedAt",
+            type: "date",
+            required: false,
+            desc: "评分更新时间"
+          }
+        ],
         price: 1.5,
         dailyLimit: 5000,
         enabled: true,
+        createTime: "2025-12-01 10:35:00",
         lastCallTime: "2026-10-28 16:12:31"
       }
     ]
@@ -474,7 +790,6 @@ export const mockPartners: PartnerItem[] = [
     id: 3,
     name: "南方电子档案服务商",
     code: "PT-0003",
-    types: ["ocr", "other"],
     scope: ["省级", "市级"],
     contact: "王强",
     phone: "13700003456",
@@ -484,7 +799,14 @@ export const mockPartners: PartnerItem[] = [
     cooperateEnd: "2026-05-31",
     createTime: "2026-02-02 10:05:00",
     remark: "合同到期未续签，已停用",
-    baseUrlProd: "https://api.nfda.com.cn",
+    envs: [
+      {
+        id: 121,
+        name: "生产环境",
+        code: "prod",
+        baseUrl: "https://api.nfda.com.cn"
+      }
+    ],
     useProxy: true,
     proxyType: "http",
     proxyUrl: "http://10.0.0.8:7890",
@@ -513,15 +835,51 @@ export const mockPartners: PartnerItem[] = [
     interfaces: [
       {
         id: 301,
+        code: "NFDA_OCR_ARCHIVE",
         name: "档案 OCR 识别",
         path: "/ocr/v2/recognize",
         method: "POST",
         payloadFormat: "form",
         authId: 31,
-        extraHeaders: [],
-        extraParams: [],
+        params: [
+          {
+            id: 30101,
+            name: "file",
+            location: "body",
+            type: "object",
+            required: true,
+            desc: "扫描件，PDF / JPG，单文件 ≤ 10MB"
+          },
+          {
+            id: 30102,
+            name: "bizType",
+            location: "body",
+            type: "string",
+            required: true,
+            desc: "业务类型，固定 archive"
+          }
+        ],
+        responses: [
+          {
+            id: 30103,
+            name: "text",
+            path: "data.text",
+            type: "string",
+            required: true,
+            desc: "全文识别结果"
+          },
+          {
+            id: 30104,
+            name: "fields",
+            path: "data.fields",
+            type: "object",
+            required: false,
+            desc: "结构化字段"
+          }
+        ],
         price: 0,
         enabled: false,
+        createTime: "2026-01-05 14:00:00",
         lastCallTime: "2026-04-18 08:00:00"
       }
     ]
@@ -531,7 +889,6 @@ export const mockPartners: PartnerItem[] = [
     id: 4,
     name: "北斗位置服务有限公司",
     code: "PT-0004",
-    types: ["map", "telecom"],
     scope: ["全国"],
     website: "https://www.beidou-lbs.com",
     contact: "赵敏",
@@ -541,8 +898,20 @@ export const mockPartners: PartnerItem[] = [
     cooperateStart: "2026-03-01",
     cooperateEnd: "2028-02-29",
     createTime: "2026-03-05 14:30:00",
-    baseUrlProd: "https://restapi.beidou-lbs.com",
-    baseUrlTest: "https://restapi-test.beidou-lbs.com",
+    envs: [
+      {
+        id: 131,
+        name: "生产环境",
+        code: "prod",
+        baseUrl: "https://restapi.beidou-lbs.com"
+      },
+      {
+        id: 132,
+        name: "测试环境",
+        code: "test",
+        baseUrl: "https://restapi-test.beidou-lbs.com"
+      }
+    ],
     authConfigs: [
       {
         id: 41,
@@ -585,30 +954,110 @@ export const mockPartners: PartnerItem[] = [
     interfaces: [
       {
         id: 401,
+        code: "BD_GEOCODE",
         name: "地址解析",
         path: "/geo/geocode",
         method: "GET",
         payloadFormat: "json",
         authId: 41,
-        extraHeaders: [],
-        extraParams: [],
+        params: [
+          {
+            id: 40101,
+            name: "address",
+            location: "query",
+            type: "string",
+            required: true,
+            desc: "结构化地址"
+          },
+          {
+            id: 40102,
+            name: "city",
+            location: "query",
+            type: "string",
+            required: false,
+            desc: "城市名，提升精度"
+          }
+        ],
+        responses: [
+          {
+            id: 40103,
+            name: "lng",
+            path: "data.lng",
+            type: "number",
+            required: true,
+            desc: "经度"
+          },
+          {
+            id: 40104,
+            name: "lat",
+            path: "data.lat",
+            type: "number",
+            required: true,
+            desc: "纬度"
+          },
+          {
+            id: 40105,
+            name: "precision",
+            path: "data.precision",
+            type: "string",
+            required: false,
+            desc: "匹配级别"
+          }
+        ],
         price: 0.02,
         dailyLimit: 200000,
         enabled: true,
+        createTime: "2026-02-18 09:30:00",
         lastCallTime: "2026-10-29 15:01:22"
       },
       {
         id: 402,
+        code: "BD_REGEO",
         name: "逆地址解析",
         path: "/geo/regeo",
         method: "GET",
         payloadFormat: "json",
         authId: 41,
-        extraHeaders: [],
-        extraParams: [],
+        params: [
+          {
+            id: 40201,
+            name: "lng",
+            location: "query",
+            type: "number",
+            required: true,
+            desc: "经度"
+          },
+          {
+            id: 40202,
+            name: "lat",
+            location: "query",
+            type: "number",
+            required: true,
+            desc: "纬度"
+          }
+        ],
+        responses: [
+          {
+            id: 40203,
+            name: "address",
+            path: "data.address",
+            type: "string",
+            required: true,
+            desc: "完整地址"
+          },
+          {
+            id: 40204,
+            name: "adcode",
+            path: "data.adcode",
+            type: "string",
+            required: false,
+            desc: "行政区划编码"
+          }
+        ],
         price: 0.02,
         dailyLimit: 200000,
         enabled: true,
+        createTime: "2026-02-18 09:45:00",
         lastCallTime: "2026-10-29 15:01:20"
       }
     ]
@@ -618,7 +1067,6 @@ export const mockPartners: PartnerItem[] = [
     id: 5,
     name: "西南政务数据运营方",
     code: "PT-0005",
-    types: ["tax", "justice"],
     scope: ["省级", "市级"],
     contact: "陈刚",
     phone: "13500005678",
@@ -629,8 +1077,27 @@ export const mockPartners: PartnerItem[] = [
     cooperateEnd: "2027-03-31",
     createTime: "2026-03-04 08:21:00",
     remark: "联调中，仅开放测试环境",
-    baseUrlProd: "https://api.swgov-data.cn",
-    baseUrlTest: "https://api-test.swgov-data.cn",
+    envs: [
+      {
+        id: 141,
+        name: "开发环境",
+        code: "dev",
+        baseUrl: "https://api-dev.swgov-data.cn"
+      },
+      {
+        id: 142,
+        name: "生产环境",
+        code: "prod",
+        baseUrl: "https://api.swgov-data.cn",
+        remark: "未开通"
+      },
+      {
+        id: 143,
+        name: "测试环境",
+        code: "test",
+        baseUrl: "https://api-test.swgov-data.cn"
+      }
+    ],
     authConfigs: [
       {
         id: 51,
@@ -655,16 +1122,44 @@ export const mockPartners: PartnerItem[] = [
     interfaces: [
       {
         id: 501,
+        code: "XN_ENT_TAX",
         name: "企业纳税信息",
         path: "/gov/tax/ent",
         method: "GET",
         payloadFormat: "json",
         authId: 51,
-        extraHeaders: [],
-        extraParams: [],
+        params: [
+          {
+            id: 50101,
+            name: "regNo",
+            location: "query",
+            type: "string",
+            required: true,
+            desc: "统一社会信用代码"
+          }
+        ],
+        responses: [
+          {
+            id: 50102,
+            name: "taxLevel",
+            path: "data.taxLevel",
+            type: "string",
+            required: true,
+            desc: "纳税信用等级"
+          },
+          {
+            id: 50103,
+            name: "year",
+            path: "data.year",
+            type: "int",
+            required: true,
+            desc: "评定年度"
+          }
+        ],
         price: 0,
         dailyLimit: 5000,
         enabled: true,
+        createTime: "2026-03-05 16:10:00",
         lastCallTime: "2026-10-29 09:12:00"
       }
     ]
@@ -673,4 +1168,25 @@ export const mockPartners: PartnerItem[] = [
 
 export function getPartnerById(id: string | number): PartnerItem | null {
   return mockPartners.find(item => item.id === Number(id)) ?? null;
+}
+
+/** 批量删除，返回实际删除条数 */
+/** 切换合作方状态：启用(1) ↔ 停用(0)。「测试中」(2) 一律落到启用 */
+export function togglePartnerStatus(id: number): boolean {
+  const target = mockPartners.find(item => item.id === id);
+  if (!target) return false;
+  target.status = target.status === 1 ? 0 : 1;
+  return true;
+}
+
+export function deletePartners(ids: number[]): number {
+  const wanted = new Set(ids);
+  let removed = 0;
+  for (let index = mockPartners.length - 1; index >= 0; index -= 1) {
+    if (wanted.has(mockPartners[index].id)) {
+      mockPartners.splice(index, 1);
+      removed += 1;
+    }
+  }
+  return removed;
 }

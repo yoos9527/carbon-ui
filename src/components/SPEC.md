@@ -27,6 +27,8 @@ tags: [ui, framework]
 
 图标前缀 `ri/*` 来自 `@iconify/json`，已随依赖安装，**离线可解析**——不要为图标引 CDN。
 
+注意两条不同的解析路径（踩过坑）：`import RiXxx from "~icons/ri/xxx-line"` 是构建期由 `unplugin-icons` 解析成组件，随处可用；而**路由 `meta.icon` 里写的字符串**（如 `ri/route-line`）走 `useRenderIcon` → `IconifyIconOffline`，只有在 `src/components/ReIcon/src/offlineIcon.ts` 里 `addIcon` 注册过才会渲染，否则菜单里是一块空白（不报错）。新增菜单图标必须同步注册，或改用带冒号的在线形式 `ri:route-line`（需联网）。
+
 # 指令
 
 `src/directives/index.ts` 全量导出：`auth` / `perms` / `copy` / `longpress` / `optimize` / `ripple`。`auth` 读路由 meta（`hasAuth`，来自 `@/router/utils`），`perms` 读 user store（`hasPerms`，来自 `@/utils/auth`）——两套口径别混，见 [[skeleton-runtime]]。两者在无权限时都是 `el.parentNode?.removeChild(el)`：元素根本不进 DOM，不要指望靠它做「禁用态」。

@@ -4,12 +4,13 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   billingTypeOptions,
+  createEmptyEnv,
   getAuthTypeLabel,
   getPartnerById,
-  getPartnerTypeLabel,
   getStatusOption,
   settleTypeOptions,
   type AuthConfig,
+  type PartnerEnv,
   type PartnerItem
 } from "./data";
 import AuthDialog from "./components/AuthDialog.vue";
@@ -23,8 +24,7 @@ defineOptions({ name: "ServicePartnerDetail" });
 
 type EnvForm = Pick<
   PartnerItem,
-  | "baseUrlProd"
-  | "baseUrlTest"
+  | "envs"
   | "charset"
   | "connectTimeout"
   | "readTimeout"
@@ -88,10 +88,6 @@ const statusOption = computed(() =>
   detail.value ? getStatusOption(detail.value.status) : undefined
 );
 
-const typeLabels = computed(() =>
-  (detail.value?.types ?? []).map(item => getPartnerTypeLabel(item))
-);
-
 const enabledInterfaceCount = computed(
   () => (detail.value?.interfaces ?? []).filter(item => item.enabled).length
 );
@@ -140,8 +136,7 @@ function startEditEnv() {
   const partner = detail.value;
   if (!partner) return;
   envForm.value = {
-    baseUrlProd: partner.baseUrlProd,
-    baseUrlTest: partner.baseUrlTest,
+    envs: partner.envs.map(item => ({ ...item })),
     charset: partner.charset,
     connectTimeout: partner.connectTimeout,
     readTimeout: partner.readTimeout,
@@ -152,15 +147,49 @@ function startEditEnv() {
   editingTab.value = "env";
 }
 
+/** 环境是可增删的列表：dev / sit / uat / prod 都可能存在，不写死两个 */
+function addEnvRow() {
+  envForm.value?.envs.push(createEmptyEnv());
+}
+
+function removeEnvRow(index: number) {
+  envForm.value?.envs.splice(index, 1);
+}
+
 function saveEnv() {
   const partner = detail.value;
   const form = envForm.value;
   if (!partner || !form) return;
-  if (!form.baseUrlProd.trim()) {
-    ElMessage.warning("生产环境地址不能为空");
+  const rows = form.envs;
+  if (!rows.length) {
+    ElMessage.warning("至少保留一个接入环境");
     return;
   }
-  Object.assign(partner, form);
+  if (rows.some(item => !item.name.trim())) {
+    ElMessage.warning("环境名称不能为空");
+    return;
+  }
+  if (rows.some(item => !item.code.trim())) {
+    ElMessage.warning("环境标识不能为空");
+    return;
+  }
+  if (rows.some(item => !item.baseUrl.trim())) {
+    ElMessage.warning("接入地址不能为空");
+    return;
+  }
+  const codes = rows.map(item => item.code.trim().toLowerCase());
+  if (new Set(codes).size !== codes.length) {
+    ElMessage.warning("环境标识不可重复");
+    return;
+  }
+  const cleaned: PartnerEnv[] = rows.map(item => ({
+    ...item,
+    name: item.name.trim(),
+    code: item.code.trim(),
+    baseUrl: item.baseUrl.trim(),
+    remark: item.remark?.trim() || undefined
+  }));
+  Object.assign(partner, form, { envs: cleaned });
   editingTab.value = "";
   ElMessage.success("环境与网络已保存");
 }
@@ -281,9 +310,6 @@ async function removeAuth(auth: AuthConfig) {
             <span class="dot" :class="detail.status === 1 ? 'is-on' : 'is-off'">
               {{ statusOption?.label ?? "未知" }}
             </span>
-            <span v-for="label in typeLabels" :key="label" class="chip">{{
-              label
-            }}</span>
             <span class="pd-head__code">{{ detail.code }}</span>
           </div>
         </div>
@@ -333,119 +359,174 @@ async function removeAuth(auth: AuthConfig) {
                 </el-button>
               </div>
 
-              <dl v-if="editingTab !== 'env'" class="grid grid--2">
-                <div class="f">
-                  <dt class="f__k">生产环境地址</dt>
-                  <dd class="f__v mono">{{ detail.baseUrlProd || "—" }}</dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">测试环境地址</dt>
-                  <dd class="f__v mono">{{ detail.baseUrlTest || "—" }}</dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">字符编码</dt>
-                  <dd class="f__v">{{ detail.charset }}</dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">网络出口</dt>
-                  <dd class="f__v">
-                    <span
-                      class="dot"
-                      :class="detail.useProxy ? 'is-warn' : 'is-off'"
-                      >{{ detail.useProxy ? "经由代理" : "直连" }}</span
-                    >
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">连接超时（ms）</dt>
-                  <dd class="f__v num">{{ detail.connectTimeout }}</dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">读取超时（ms）</dt>
-                  <dd class="f__v num">{{ detail.readTimeout }}</dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">代理类型</dt>
-                  <dd class="f__v">
-                    {{ detail.useProxy ? detail.proxyType || "—" : "—" }}
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">代理地址</dt>
-                  <dd class="f__v mono">
-                    {{ detail.useProxy ? detail.proxyUrl || "—" : "—" }}
-                  </dd>
-                </div>
-              </dl>
-
-              <form v-else-if="envForm" class="grid grid--2 grid--edit">
-                <div class="f">
-                  <label class="f__k is-req">生产环境地址</label>
-                  <el-input
-                    v-model="envForm.baseUrlProd"
-                    placeholder="https://api.example.com"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">测试环境地址</label>
-                  <el-input
-                    v-model="envForm.baseUrlTest"
-                    placeholder="https://api-test.example.com"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">字符编码</label>
-                  <el-select v-model="envForm.charset">
-                    <el-option
-                      v-for="item in charsetOptions"
-                      :key="item"
-                      :label="item"
-                      :value="item"
-                    />
-                  </el-select>
-                </div>
-                <div class="f">
-                  <label class="f__k">走代理</label>
-                  <el-switch v-model="envForm.useProxy" />
-                </div>
-                <div class="f">
-                  <label class="f__k">连接超时（ms）</label>
-                  <el-input-number
-                    v-model="envForm.connectTimeout"
-                    :min="100"
-                    :step="500"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">读取超时（ms）</label>
-                  <el-input-number
-                    v-model="envForm.readTimeout"
-                    :min="100"
-                    :step="500"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">代理类型</label>
-                  <el-select
-                    v-model="envForm.proxyType"
-                    :disabled="!envForm.useProxy"
-                    placeholder="请选择"
+              <template v-if="editingTab !== 'env'">
+                <div v-if="detail.envs.length" class="alist alist--env">
+                  <div class="alist__head">
+                    <span>环境名称</span>
+                    <span>接入地址</span>
+                    <span>标识</span>
+                    <span />
+                  </div>
+                  <div
+                    v-for="row in detail.envs"
+                    :key="row.id"
+                    class="alist__row"
                   >
-                    <el-option label="HTTP" value="http" />
-                    <el-option label="SOCKS5" value="socks5" />
-                  </el-select>
+                    <div class="alist__name">
+                      <span class="alist__title">{{ row.name }}</span>
+                      <span v-if="row.remark" class="alist__remark">{{
+                        row.remark
+                      }}</span>
+                    </div>
+                    <div class="alist__content">
+                      <span class="alist__val mono">{{
+                        row.baseUrl || "—"
+                      }}</span>
+                    </div>
+                    <span class="chip chip--code">{{ row.code }}</span>
+                    <span />
+                  </div>
                 </div>
-                <div class="f">
-                  <label class="f__k">代理地址</label>
-                  <el-input
-                    v-model="envForm.proxyUrl"
-                    :disabled="!envForm.useProxy"
-                    placeholder="http://10.0.0.8:7890"
-                  />
+                <p v-if="!detail.envs.length" class="empty-inline">
+                  尚未配置接入地址
+                </p>
+
+                <dl class="grid grid--2">
+                  <div class="f">
+                    <dt class="f__k">字符编码</dt>
+                    <dd class="f__v">{{ detail.charset }}</dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">网络出口</dt>
+                    <dd class="f__v">
+                      <span
+                        class="dot"
+                        :class="detail.useProxy ? 'is-warn' : 'is-off'"
+                        >{{ detail.useProxy ? "经由代理" : "直连" }}</span
+                      >
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">连接超时（ms）</dt>
+                    <dd class="f__v num">{{ detail.connectTimeout }}</dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">读取超时（ms）</dt>
+                    <dd class="f__v num">{{ detail.readTimeout }}</dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">代理类型</dt>
+                    <dd class="f__v">
+                      {{ detail.useProxy ? detail.proxyType || "—" : "—" }}
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">代理地址</dt>
+                    <dd class="f__v mono">
+                      {{ detail.useProxy ? detail.proxyUrl || "—" : "—" }}
+                    </dd>
+                  </div>
+                </dl>
+              </template>
+
+              <div v-else-if="envForm">
+                <div class="alist alist--env alist--env-edit">
+                  <div class="alist__head">
+                    <span>环境名称</span>
+                    <span>接入地址</span>
+                    <span>标识</span>
+                    <span />
+                  </div>
+                  <div
+                    v-for="(row, index) in envForm.envs"
+                    :key="row.id"
+                    class="alist__row"
+                  >
+                    <el-input v-model="row.name" placeholder="生产环境" />
+                    <el-input
+                      v-model="row.baseUrl"
+                      class="mono-field"
+                      placeholder="https://api.example.com"
+                    />
+                    <el-input v-model="row.code" placeholder="prod" />
+                    <div class="alist__ops">
+                      <button
+                        type="button"
+                        class="txt txt--danger"
+                        @click="removeEnvRow(index)"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </form>
+                <p v-if="!envForm.envs.length" class="empty-inline">
+                  还没有接入环境，先新增一个
+                </p>
+                <el-button
+                  text
+                  :icon="AddIcon"
+                  class="envs-add"
+                  @click="addEnvRow"
+                >
+                  新增环境
+                </el-button>
+
+                <form class="grid grid--2 grid--edit">
+                  <div class="f">
+                    <label class="f__k">字符编码</label>
+                    <el-select v-model="envForm.charset">
+                      <el-option
+                        v-for="item in charsetOptions"
+                        :key="item"
+                        :label="item"
+                        :value="item"
+                      />
+                    </el-select>
+                  </div>
+                  <div class="f">
+                    <label class="f__k">走代理</label>
+                    <el-switch v-model="envForm.useProxy" />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">连接超时（ms）</label>
+                    <el-input-number
+                      v-model="envForm.connectTimeout"
+                      :min="100"
+                      :step="500"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">读取超时（ms）</label>
+                    <el-input-number
+                      v-model="envForm.readTimeout"
+                      :min="100"
+                      :step="500"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">代理类型</label>
+                    <el-select
+                      v-model="envForm.proxyType"
+                      :disabled="!envForm.useProxy"
+                      placeholder="请选择"
+                    >
+                      <el-option label="HTTP" value="http" />
+                      <el-option label="SOCKS5" value="socks5" />
+                    </el-select>
+                  </div>
+                  <div class="f">
+                    <label class="f__k">代理地址</label>
+                    <el-input
+                      v-model="envForm.proxyUrl"
+                      :disabled="!envForm.useProxy"
+                      placeholder="http://10.0.0.8:7890"
+                    />
+                  </div>
+                </form>
+              </div>
 
               <div v-if="editingTab === 'env'" class="editbar">
                 <span class="editbar__tip">修改后需保存才会生效</span>
@@ -921,6 +1002,14 @@ async function removeAuth(auth: AuthConfig) {
   --warn: #c77700;
   --code: #6b4dff;
 
+  /* 弱底色：悬停、进度条槽、底栏、提示块 */
+  --wash: #fafbfd;
+  --hover: #f4f6fa;
+  --track: #e9edf5;
+  /* color-mix 的底色：亮色往白里掺，暗色往面板色里掺 */
+  --mix: #fff;
+  --mix-ink: #0b1a33;
+
   padding: 16px;
   color: var(--ink);
   font-size: 13px;
@@ -929,6 +1018,26 @@ async function removeAuth(auth: AuthConfig) {
   :deep(.el-tabs__header) {
     margin-right: 0;
   }
+}
+
+/* 暗色：只换变量，下面的规则全部走 var() */
+html.dark .pd {
+  --ink: #e6ebf5;
+  --ink-2: #a7b2c7;
+  --muted: #7a879e;
+  --line: #262d3b;
+  --line-soft: #1e242f;
+  --surface: #151a23;
+  --canvas: #020409;
+  --wash: #1a2029;
+  --hover: #1d232e;
+  --track: #232a36;
+  --mix: #151a23;
+  --mix-ink: #e8eefc;
+  /* 绿/琥珀/#6b4dff 在 #151a23 上对比度不足，提亮 */
+  --on: #3fbf7f;
+  --warn: #e0a33a;
+  --code: #9d8bff;
 }
 
 /* ------------------------------- 档案头 ------------------------------- */
@@ -976,7 +1085,7 @@ async function removeAuth(auth: AuthConfig) {
   padding: 0 10px 0 6px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
   color: var(--ink-2);
   font-size: 12px;
   cursor: pointer;
@@ -989,12 +1098,12 @@ async function removeAuth(auth: AuthConfig) {
 
   &:hover {
     color: var(--accent);
-    border-color: color-mix(in srgb, var(--accent) 40%, #fff);
-    background: color-mix(in srgb, var(--accent) 6%, #fff);
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--mix));
+    background: color-mix(in srgb, var(--accent) 6%, var(--mix));
   }
 
   &:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--accent) 55%, #fff);
+    outline: 2px solid color-mix(in srgb, var(--accent) 55%, var(--mix));
     outline-offset: 1px;
   }
 }
@@ -1085,13 +1194,13 @@ async function removeAuth(auth: AuthConfig) {
 
     &:hover {
       color: var(--ink);
-      background: #f4f6fa;
+      background: var(--hover);
     }
 
     &.is-active {
       color: var(--accent);
       font-weight: 600;
-      background: color-mix(in srgb, var(--accent) 7%, #fff);
+      background: color-mix(in srgb, var(--accent) 7%, var(--mix));
 
       &::before {
         height: 22px;
@@ -1251,7 +1360,7 @@ async function removeAuth(auth: AuthConfig) {
 .meter-wrap {
   margin-top: 18px;
   padding: 14px 16px;
-  background: #fafbfd;
+  background: var(--wash);
   border: 1px solid var(--line-soft);
   border-radius: 8px;
 }
@@ -1278,7 +1387,7 @@ async function removeAuth(auth: AuthConfig) {
     height: 4px;
     margin: 8px 0 0;
     border-radius: 2px;
-    background: #e9edf5;
+    background: var(--track);
     overflow: hidden;
 
     i {
@@ -1326,7 +1435,7 @@ async function removeAuth(auth: AuthConfig) {
     transition: background 0.15s;
 
     &:hover {
-      background: #fafbfd;
+      background: var(--wash);
     }
 
     &:last-child {
@@ -1365,6 +1474,42 @@ async function removeAuth(auth: AuthConfig) {
   }
 }
 
+/* 环境列表：名称 / 接入地址 / 标识，比鉴权表少一个状态列 */
+.alist--env {
+  .alist__head,
+  .alist__row {
+    grid-template-columns: minmax(180px, 1.1fr) minmax(260px, 1.9fr) 96px 40px;
+  }
+}
+
+.alist__remark {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 环境编辑态：每行三个输入框，行高交给控件撑开 */
+.alist--env-edit {
+  .alist__row {
+    padding: 8px 0;
+  }
+
+  :deep(.el-input) {
+    width: 100%;
+  }
+}
+
+/* 地址列用等宽字体，便于核对域名 */
+.mono-field :deep(.el-input__inner) {
+  font-family:
+    ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+  font-size: 12px;
+}
+
+.envs-add {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
 /* ------------------------------- 原子件 ------------------------------- */
 .dot {
   display: inline-flex;
@@ -1400,13 +1545,13 @@ async function removeAuth(auth: AuthConfig) {
   height: 20px;
   padding: 0 8px;
   border-radius: 4px;
-  background: color-mix(in srgb, var(--accent) 8%, #fff);
-  color: color-mix(in srgb, var(--accent) 82%, #0b1a33);
+  background: color-mix(in srgb, var(--accent) 8%, var(--mix));
+  color: color-mix(in srgb, var(--accent) 82%, var(--mix-ink));
   font-size: 11px;
   white-space: nowrap;
 
   &--code {
-    background: color-mix(in srgb, var(--code) 9%, #fff);
+    background: color-mix(in srgb, var(--code) 9%, var(--mix));
     color: var(--code);
   }
 }
@@ -1443,7 +1588,7 @@ async function removeAuth(auth: AuthConfig) {
   }
 
   &:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--accent) 55%, #fff);
+    outline: 2px solid color-mix(in srgb, var(--accent) 55%, var(--mix));
     outline-offset: 2px;
     border-radius: 2px;
   }
@@ -1458,7 +1603,7 @@ async function removeAuth(auth: AuthConfig) {
   gap: 10px;
   margin: 22px -24px -22px;
   padding: 12px 24px;
-  background: #fafbfd;
+  background: var(--wash);
   border-top: 1px solid var(--line);
 
   &__tip {

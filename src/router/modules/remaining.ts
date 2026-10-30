@@ -51,6 +51,26 @@ export default [
       }
     ]
   },
+  // 接口配置页（不在菜单中，由接口管理列表页点击行跳入）
+  {
+    path: "/service/interfaces/edit",
+    component: Layout,
+    meta: {
+      title: "接口管理",
+      showLink: false
+    },
+    children: [
+      {
+        path: "/service/interfaces/edit/:id",
+        name: "ServiceInterfaceEdit",
+        component: () => import("@/views/service/interfaces/edit.vue"),
+        meta: {
+          title: "调用配置",
+          showLink: false
+        }
+      }
+    ]
+  },
   {
     path: "/redirect",
     component: Layout,
