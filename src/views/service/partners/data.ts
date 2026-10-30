@@ -61,11 +61,21 @@ export interface InterfaceResponseField {
   /** JSON 路径，如 data.entName / data.list[].name */
   path: string;
   type: FieldType;
-  /** 是否必返 */
-  required: boolean;
+  /** 查得字段的校验方式：取值 = 必须等于 checkValue；非空 = 必须有值 */
+  checkMode?: "value" | "notEmpty";
+  /** checkMode === "value" 时的期望值，如 200 */
+  checkValue?: string;
   desc?: string;
-  example?: string;
 }
+
+/** 查得字段校验方式下拉 */
+export const checkModeOptions: {
+  label: string;
+  value: NonNullable<InterfaceResponseField["checkMode"]>;
+}[] = [
+  { label: "取值", value: "value" },
+  { label: "非空", value: "notEmpty" }
+];
 
 /** 单个接口（能力）配置，只存与合作方公共配置不同的部分 */
 export interface PartnerInterfaceItem {
@@ -84,12 +94,38 @@ export interface PartnerInterfaceItem {
   params: InterfaceParam[];
   /** 响应出参字段 */
   responses: InterfaceResponseField[];
-  /** 前置处理器：发起请求前的报文改写，'none' 表示不处理 */
+  /** 前置处理器：模板解析器写内联模板，解析器则引用解析器库 */
   preProcessor?: ProcessorType;
-  /** 后置处理器：拿到响应后的解包/映射，'none' 表示不处理 */
+  /** 内联解析模板（preProcessor === "template" 时必填） */
+  preTemplate?: string;
+  /** 引用的前置解析器 id（preProcessor === "parser" 时必填） */
+  preParserId?: number;
+  /** 后置处理器：语义同前置，只是作用在响应上 */
   postProcessor?: ProcessorType;
+  /** 内联响应映射模板（postProcessor === "template" 时必填） */
+  postTemplate?: string;
+  /** 引用的后置解析器 id（postProcessor === "parser" 时必填） */
+  postParserId?: number;
   /** 覆盖合作方默认超时 */
   timeout?: number;
+  /** 流控：每秒请求上限，留空沿用合作方 */
+  qps?: number;
+  /** 流控：并发上限，留空沿用合作方 */
+  concurrency?: number;
+  /** 流控：失败重试次数，留空沿用合作方 */
+  retryTimes?: number;
+  /** 流控：重试间隔（毫秒），留空沿用合作方 */
+  retryInterval?: number;
+  /** 流控：熔断失败阈值，留空沿用合作方 */
+  breakerThreshold?: number;
+  /** 流控：熔断恢复时长（分钟），留空沿用合作方 */
+  breakerRecoverMin?: number;
+  /** 缓存：是否缓存响应 */
+  cacheEnabled?: boolean;
+  /** 缓存：缓存时长（配合 cacheUnit），留空沿用合作方 */
+  cacheTtl?: number;
+  /** 缓存：缓存时长的单位，缺省按秒 */
+  cacheUnit?: CacheUnit;
   price: number;
   dailyLimit?: number;
   enabled: boolean;
@@ -149,6 +185,10 @@ export interface PartnerItem {
   breakerThreshold: number;
   breakerRecoverMin: number;
   cacheTtl: number;
+  /** 是否缓存响应（接口没单独配置时用它） */
+  cacheEnabled: boolean;
+  /** 缓存时长单位，与 cacheTtl 配对 */
+  cacheUnit: CacheUnit;
   alarmReceiver?: string;
 
   /** 计费与额度 */
@@ -195,13 +235,28 @@ export const payloadFormatOptions = [
   { label: "Form", value: "form" }
 ];
 
-export type ProcessorType = "none" | "groovy";
+/**
+ * 处理器只有两种来源：`template` = 在接口里直接写内联 JSON 模板（写死的「模板解析器」），
+ * `parser` = 引用「服务管理 › 解析器」里的 Groovy 解析器（见 preParserId / postParserId）。
+ * 不再有「不处理」——清空下拉就等于不处理。
+ */
+export type ProcessorType = "template" | "parser";
 
-/** 前置/后置处理器：现阶段只有「不处理」和「Groovy 脚本」两种 */
-export const processorOptions: { label: string; value: ProcessorType }[] = [
-  { label: "不处理", value: "none" },
-  { label: "Groovy 脚本", value: "groovy" }
+/** 接口处理器下拉的固定首项：写死的模板解析器（选中后写内联模板） */
+export const TEMPLATE_PROCESSOR_VALUE = "template";
+
+/** 缓存时长的计量单位（接口「缓存设置」的单位下拉） */
+export type CacheUnit = "minute" | "hour" | "day";
+
+export const cacheUnitOptions: { label: string; value: CacheUnit }[] = [
+  { label: "分钟", value: "minute" },
+  { label: "小时", value: "hour" },
+  { label: "天", value: "day" }
 ];
+
+export function getCacheUnitLabel(unit: CacheUnit): string {
+  return cacheUnitOptions.find(item => item.value === unit)?.label ?? "分钟";
+}
 
 export const paramLocationOptions: { label: string; value: ParamLocation }[] = [
   { label: "query", value: "query" },
@@ -306,15 +361,36 @@ export function createEmptyInterface(): PartnerInterfaceItem {
     payloadFormat: "json",
     params: [],
     responses: [],
-    preProcessor: "none",
-    postProcessor: "none",
+    preProcessor: TEMPLATE_PROCESSOR_VALUE,
+    postProcessor: TEMPLATE_PROCESSOR_VALUE,
     price: 0,
+    cacheEnabled: false,
+    cacheUnit: "minute",
     enabled: true
   };
 }
 
 export function createEmptyEnv(): PartnerEnv {
   return { id: nextId(), name: "", code: "", baseUrl: "" };
+}
+
+/** 默认环境（`envs[0]`）：接口的完整调用地址由它的 baseUrl 拼出来 */
+export function getDefaultEnv(
+  partner?: PartnerItem | null
+): PartnerEnv | undefined {
+  return partner?.envs?.[0];
+}
+
+/** 完整调用地址 = 环境地址（去尾斜杠）+ 接口路径（补前导斜杠） */
+export function resolveInterfaceUrl(
+  baseUrl: string | undefined,
+  path: string
+): string {
+  const base = (baseUrl ?? "").trim().replace(/\/+$/, "");
+  const suffix = (path ?? "").trim();
+  if (!base) return "";
+  if (!suffix) return base;
+  return base + (suffix.startsWith("/") ? suffix : `/${suffix}`);
 }
 
 export function createEmptyPartner(): PartnerItem {
@@ -341,6 +417,8 @@ export function createEmptyPartner(): PartnerItem {
     breakerThreshold: 10,
     breakerRecoverMin: 5,
     cacheTtl: 0,
+    cacheEnabled: false,
+    cacheUnit: "minute",
     billingType: "per_call",
     unitPrice: 0,
     quotaTotal: 0,
@@ -421,7 +499,9 @@ export const mockPartners: PartnerItem[] = [
     retryInterval: 500,
     breakerThreshold: 10,
     breakerRecoverMin: 5,
-    cacheTtl: 300,
+    cacheTtl: 5,
+    cacheEnabled: true,
+    cacheUnit: "minute",
     alarmReceiver: "ops@carbon.io",
     billingType: "per_call",
     unitPrice: 0.5,
@@ -435,6 +515,10 @@ export const mockPartners: PartnerItem[] = [
       {
         id: 101,
         code: "ZK_ENT_BASE",
+        preProcessor: "parser",
+        preParserId: 5001,
+        postProcessor: "parser",
+        postParserId: 5002,
         name: "企业工商基本信息",
         path: "/api/ent/base",
         method: "GET",
@@ -465,16 +549,13 @@ export const mockPartners: PartnerItem[] = [
             name: "entName",
             path: "data.entName",
             type: "string",
-            required: true,
-            desc: "企业名称",
-            example: "阿里巴巴（中国）有限公司"
+            desc: "企业名称"
           },
           {
             id: 10104,
             name: "regNo",
             path: "data.regNo",
             type: "string",
-            required: true,
             desc: "统一社会信用代码"
           },
           {
@@ -482,7 +563,6 @@ export const mockPartners: PartnerItem[] = [
             name: "regCapital",
             path: "data.regCapital",
             type: "number",
-            required: false,
             desc: "注册资本（万元）"
           },
           {
@@ -490,7 +570,8 @@ export const mockPartners: PartnerItem[] = [
             name: "status",
             path: "data.status",
             type: "string",
-            required: true,
+            checkMode: "value",
+            checkValue: "200",
             desc: "经营状态"
           }
         ],
@@ -503,6 +584,10 @@ export const mockPartners: PartnerItem[] = [
       {
         id: 102,
         code: "ZK_ENT_PARTNER",
+        preProcessor: "parser",
+        preParserId: 5001,
+        postProcessor: "parser",
+        postParserId: 5002,
         name: "股东信息",
         path: "/api/ent/partner",
         method: "GET",
@@ -533,7 +618,6 @@ export const mockPartners: PartnerItem[] = [
             name: "name",
             path: "data.list[].name",
             type: "string",
-            required: true,
             desc: "股东名称"
           },
           {
@@ -541,7 +625,6 @@ export const mockPartners: PartnerItem[] = [
             name: "ratio",
             path: "data.list[].ratio",
             type: "number",
-            required: false,
             desc: "持股比例（%）"
           },
           {
@@ -549,7 +632,6 @@ export const mockPartners: PartnerItem[] = [
             name: "total",
             path: "data.total",
             type: "int",
-            required: true,
             desc: "总条数"
           }
         ],
@@ -562,6 +644,10 @@ export const mockPartners: PartnerItem[] = [
       {
         id: 103,
         code: "ZK_ENT_LAWSUIT",
+        preProcessor: "parser",
+        preParserId: 5001,
+        postProcessor: "parser",
+        postParserId: 5002,
         name: "司法涉诉",
         path: "/api/ent/lawsuit",
         method: "POST",
@@ -599,7 +685,6 @@ export const mockPartners: PartnerItem[] = [
             name: "caseNo",
             path: "data.list[].caseNo",
             type: "string",
-            required: true,
             desc: "案号"
           },
           {
@@ -607,7 +692,6 @@ export const mockPartners: PartnerItem[] = [
             name: "cause",
             path: "data.list[].cause",
             type: "string",
-            required: false,
             desc: "案由"
           },
           {
@@ -615,7 +699,6 @@ export const mockPartners: PartnerItem[] = [
             name: "count",
             path: "data.count",
             type: "int",
-            required: true,
             desc: "命中数量"
           }
         ],
@@ -673,7 +756,9 @@ export const mockPartners: PartnerItem[] = [
     concurrency: 5,
     retryTimes: 1,
     retryInterval: 800,
-    cacheTtl: 600,
+    cacheTtl: 10,
+    cacheEnabled: true,
+    cacheUnit: "minute",
     billingType: "package",
     unitPrice: 0.35,
     quotaTotal: 200000,
@@ -686,6 +771,10 @@ export const mockPartners: PartnerItem[] = [
       {
         id: 201,
         code: "QXT_ENT_BASE",
+        preProcessor: "parser",
+        preParserId: 5003,
+        postProcessor: "parser",
+        postParserId: 5004,
         name: "企业工商基本信息",
         path: "/open/ent/base",
         method: "GET",
@@ -715,7 +804,6 @@ export const mockPartners: PartnerItem[] = [
             name: "entName",
             path: "data.entName",
             type: "string",
-            required: true,
             desc: "企业名称"
           },
           {
@@ -723,7 +811,6 @@ export const mockPartners: PartnerItem[] = [
             name: "creditCode",
             path: "data.creditCode",
             type: "string",
-            required: true,
             desc: "统一社会信用代码"
           }
         ],
@@ -736,6 +823,10 @@ export const mockPartners: PartnerItem[] = [
       {
         id: 202,
         code: "QXT_CREDIT_SCORE",
+        preProcessor: "parser",
+        preParserId: 5003,
+        postProcessor: "parser",
+        postParserId: 5004,
         name: "企业信用评分",
         path: "/open/ent/creditScore",
         method: "GET",
@@ -757,7 +848,6 @@ export const mockPartners: PartnerItem[] = [
             name: "score",
             path: "data.score",
             type: "int",
-            required: true,
             desc: "信用分 0-1000"
           },
           {
@@ -765,7 +855,6 @@ export const mockPartners: PartnerItem[] = [
             name: "level",
             path: "data.level",
             type: "string",
-            required: false,
             desc: "等级 A/B/C/D"
           },
           {
@@ -773,7 +862,6 @@ export const mockPartners: PartnerItem[] = [
             name: "updatedAt",
             path: "data.updatedAt",
             type: "date",
-            required: false,
             desc: "评分更新时间"
           }
         ],
@@ -836,6 +924,10 @@ export const mockPartners: PartnerItem[] = [
       {
         id: 301,
         code: "NFDA_OCR_ARCHIVE",
+        preProcessor: "parser",
+        preParserId: 5005,
+        postProcessor: "parser",
+        postParserId: 5006,
         name: "档案 OCR 识别",
         path: "/ocr/v2/recognize",
         method: "POST",
@@ -865,7 +957,6 @@ export const mockPartners: PartnerItem[] = [
             name: "text",
             path: "data.text",
             type: "string",
-            required: true,
             desc: "全文识别结果"
           },
           {
@@ -873,7 +964,6 @@ export const mockPartners: PartnerItem[] = [
             name: "fields",
             path: "data.fields",
             type: "object",
-            required: false,
             desc: "结构化字段"
           }
         ],
@@ -941,7 +1031,9 @@ export const mockPartners: PartnerItem[] = [
     retryInterval: 300,
     breakerThreshold: 20,
     breakerRecoverMin: 3,
-    cacheTtl: 60,
+    cacheTtl: 1,
+    cacheEnabled: true,
+    cacheUnit: "hour",
     alarmReceiver: "lbs-alert@carbon.io",
     billingType: "per_call",
     unitPrice: 0.02,
@@ -955,6 +1047,10 @@ export const mockPartners: PartnerItem[] = [
       {
         id: 401,
         code: "BD_GEOCODE",
+        preProcessor: "parser",
+        preParserId: 5007,
+        postProcessor: "parser",
+        postParserId: 5008,
         name: "地址解析",
         path: "/geo/geocode",
         method: "GET",
@@ -984,7 +1080,6 @@ export const mockPartners: PartnerItem[] = [
             name: "lng",
             path: "data.lng",
             type: "number",
-            required: true,
             desc: "经度"
           },
           {
@@ -992,7 +1087,6 @@ export const mockPartners: PartnerItem[] = [
             name: "lat",
             path: "data.lat",
             type: "number",
-            required: true,
             desc: "纬度"
           },
           {
@@ -1000,7 +1094,6 @@ export const mockPartners: PartnerItem[] = [
             name: "precision",
             path: "data.precision",
             type: "string",
-            required: false,
             desc: "匹配级别"
           }
         ],
@@ -1013,6 +1106,10 @@ export const mockPartners: PartnerItem[] = [
       {
         id: 402,
         code: "BD_REGEO",
+        preProcessor: "parser",
+        preParserId: 5007,
+        postProcessor: "parser",
+        postParserId: 5008,
         name: "逆地址解析",
         path: "/geo/regeo",
         method: "GET",
@@ -1042,7 +1139,6 @@ export const mockPartners: PartnerItem[] = [
             name: "address",
             path: "data.address",
             type: "string",
-            required: true,
             desc: "完整地址"
           },
           {
@@ -1050,7 +1146,6 @@ export const mockPartners: PartnerItem[] = [
             name: "adcode",
             path: "data.adcode",
             type: "string",
-            required: false,
             desc: "行政区划编码"
           }
         ],
@@ -1113,6 +1208,8 @@ export const mockPartners: PartnerItem[] = [
     retryTimes: 2,
     retryInterval: 1000,
     cacheTtl: 0,
+    cacheEnabled: false,
+    cacheUnit: "minute",
     billingType: "free",
     unitPrice: 0,
     quotaTotal: 0,
@@ -1123,6 +1220,10 @@ export const mockPartners: PartnerItem[] = [
       {
         id: 501,
         code: "XN_ENT_TAX",
+        preProcessor: "parser",
+        preParserId: 5009,
+        postProcessor: "parser",
+        postParserId: 5010,
         name: "企业纳税信息",
         path: "/gov/tax/ent",
         method: "GET",
@@ -1144,7 +1245,6 @@ export const mockPartners: PartnerItem[] = [
             name: "taxLevel",
             path: "data.taxLevel",
             type: "string",
-            required: true,
             desc: "纳税信用等级"
           },
           {
@@ -1152,7 +1252,6 @@ export const mockPartners: PartnerItem[] = [
             name: "year",
             path: "data.year",
             type: "int",
-            required: true,
             desc: "评定年度"
           }
         ],

@@ -3,26 +3,30 @@ import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import {
+  cacheUnitOptions,
+  checkModeOptions,
   createForm,
+  defaultValueError,
   fieldTypeOptions,
   formSteps,
   getAuthOptions,
   getInterfaceRowById,
   getPartnerById,
-  defaultValueError,
   isCodeTaken,
   paramLocationOptions,
-  processorOptions,
   saveInterfaceForm,
   toForm,
-  validateAll,
-  validateStep,
   type InterfaceForm,
-  type InterfaceRow
+  type InterfaceRow,
+  validateAll
 } from "./data";
+import { getParserById, listUsableParsers } from "../parsers/data";
+import CodeEditor from "@/components/CodeEditor/index.vue";
 import {
   getAuthTypeLabel,
+  getCacheUnitLabel,
   nextId,
+  resolveInterfaceUrl,
   type AuthConfig,
   type InterfaceParam,
   type InterfaceResponseField
@@ -42,6 +46,23 @@ const row = ref<InterfaceRow | null>(null);
 const form = ref<InterfaceForm>(createForm(0));
 const authOptions = ref<AuthConfig[]>([]);
 const step = ref(1);
+
+/** 模板框占位示例：直接写在模板里会被 prettier 当表达式解析失败 */
+const templatePlaceholder = [
+  "{",
+  '  "id": "${body.id}",',
+  '  "name": "${body.ent_name}"',
+  "}"
+].join("\n");
+
+/** 响应映射模板的占位示例（左边是出参字段名，右边是网关返回里的取值路径） */
+const responseTemplatePlaceholder = [
+  "{",
+  '  "name": "${resp.data.ent_name}",',
+  '  "regNo": "${resp.data.reg_no}"',
+  "}"
+].join("\n");
+
 const error = ref<{
   step: number;
   field?: string;
@@ -58,6 +79,24 @@ const partner = computed(() =>
 const partnerName = computed(() => partner.value?.name ?? "—");
 const partnerCode = computed(() => partner.value?.code ?? "");
 
+/** 合作方配的几个接入环境，接口的完整地址按选中的环境拼接 */
+const envs = computed(() => partner.value?.envs ?? []);
+const previewEnvId = ref<number | undefined>(undefined);
+watch(
+  envs,
+  list => {
+    previewEnvId.value = list[0]?.id;
+  },
+  { immediate: true }
+);
+const previewEnv = computed(() =>
+  envs.value.find(item => item.id === previewEnvId.value)
+);
+/** 环境地址 + 接口路径 = 实际调用地址；环境没配地址时为空，让用户一眼看出没联动 */
+const previewUrl = computed(() =>
+  resolveInterfaceUrl(previewEnv.value?.baseUrl, form.value.path)
+);
+
 /** 标识重名实时提示，不必等点保存 */
 const codeTaken = computed(
   () =>
@@ -71,7 +110,14 @@ const currentAuth = computed(() =>
 const stepHints = computed(() => [
   form.value.name.trim() ? "已填写" : "待填写",
   `${form.value.params.length} 个入参`,
-  `${form.value.responses.length} 个出参`
+  `${form.value.responses.length} 个出参`,
+  [
+    form.value.price > 0 ? `￥${form.value.price} / 次` : "免费",
+    form.value.qps ? `QPS ${form.value.qps}` : "流控沿用",
+    form.value.cacheEnabled
+      ? `缓存 ${form.value.cacheTtl} ${getCacheUnitLabel(form.value.cacheUnit)}`
+      : "不缓存"
+  ].join(" · ")
 ]);
 
 function load() {
@@ -99,9 +145,100 @@ function goBack() {
   router.push("/service/interfaces");
 }
 
+/** 高级配置里「留空沿用合作方」的取值来源：合作方的调用策略与网络参数 */
+const fallback = computed(() => {
+  const item = partner.value;
+  if (!item) {
+    return {
+      price: "0 表示免费",
+      dailyLimit: "沿用合作方",
+      timeout: "沿用合作方",
+      qps: "沿用合作方",
+      concurrency: "沿用合作方",
+      retryTimes: "沿用合作方",
+      retryInterval: "沿用合作方",
+      breakerThreshold: "沿用合作方",
+      breakerRecoverMin: "沿用合作方",
+      cacheTtl: "1",
+      cacheText: ""
+    };
+  }
+  return {
+    price: "0 表示免费",
+    dailyLimit: `${item.dailyLimit} 次 / 天`,
+    timeout: `${item.readTimeout} 毫秒`,
+    qps: `${item.qps} 次 / 秒`,
+    concurrency: `${item.concurrency}`,
+    retryTimes: `${item.retryTimes} 次`,
+    retryInterval: `${item.retryInterval} 毫秒`,
+    breakerThreshold: `${item.breakerThreshold} 次`,
+    breakerRecoverMin: `${item.breakerRecoverMin} 分钟`,
+    cacheTtl: item.cacheEnabled ? `${item.cacheTtl}` : "1",
+    cacheText: item.cacheEnabled
+      ? `合作方默认：开启 · ${item.cacheTtl} ${getCacheUnitLabel(item.cacheUnit)}`
+      : "合作方默认：不缓存"
+  };
+});
+
+/** 字段名全局唯一，不必再比步骤号（高级配置里的字段各在自己的分组） */
 function isFieldError(field: string) {
-  return error.value?.step === 1 && error.value.field === field;
+  return error.value?.field === field;
 }
+
+/** 第二步模板框（前置解析模板）的校验错误文案 */
+const templateError = computed(() =>
+  error.value?.step === 2 && error.value.field === "preTemplate"
+    ? error.value.message
+    : ""
+);
+
+/** 第三步模板框（响应映射模板）的校验错误文案 */
+const responseTemplateError = computed(() =>
+  error.value?.step === 3 && error.value.field === "postTemplate"
+    ? error.value.message
+    : ""
+);
+
+/** 处理器下拉的取值：template = 写内联模板，parser:<id> = 引用解析器库里的模板 */
+const PRE_PREFIX = "parser:";
+
+const prePicker = computed({
+  get: () =>
+    form.value.preProcessor === "parser"
+      ? PRE_PREFIX + (form.value.preParserId ?? "")
+      : "template",
+  set: (value: string) => {
+    if (value === "template") {
+      form.value.preProcessor = "template";
+      form.value.preParserId = undefined;
+      return;
+    }
+    form.value.preProcessor = "parser";
+    form.value.preParserId = Number(value.slice(PRE_PREFIX.length));
+  }
+});
+
+const postPicker = computed({
+  get: () =>
+    form.value.postProcessor === "parser"
+      ? PRE_PREFIX + (form.value.postParserId ?? "")
+      : "template",
+  set: (value: string) => {
+    if (value === "template") {
+      form.value.postProcessor = "template";
+      form.value.postParserId = undefined;
+      return;
+    }
+    form.value.postProcessor = "parser";
+    form.value.postParserId = Number(value.slice(PRE_PREFIX.length));
+  }
+});
+
+/** 引用了解析器：默认只显示「名称 + 标识 + 版本」，代码要点开才看（改动要去「解析器」菜单） */
+const preParser = computed(() => getParserById(form.value.preParserId));
+const postParser = computed(() => getParserById(form.value.postParserId));
+const showPreCode = ref(false);
+const showPostCode = ref(false);
 
 function isCellError(index: number, column: string) {
   return error.value?.rowIndex === index && error.value?.column === column;
@@ -109,34 +246,15 @@ function isCellError(index: number, column: string) {
 
 function goto(target: number) {
   if (target === step.value) return;
-  if (target < step.value) {
-    error.value = null;
-    step.value = target;
-    return;
-  }
-  // 往前跳：把中间经过的步骤依次校验，不过就停在出错的那一步
-  for (let index = step.value; index < target; index += 1) {
-    const result = validateStep(index, form.value);
-    if (result) {
-      error.value = result;
-      step.value = index;
-      ElMessage.error(result.message);
-      return;
-    }
-  }
+  // 校验只在保存时跑：这里只切步，顺手清掉上一次的报错高亮
   error.value = null;
   step.value = target;
 }
 
 function next() {
-  const result = validateStep(step.value, form.value);
-  if (result) {
-    error.value = result;
-    ElMessage.error(result.message);
-    return;
-  }
+  if (step.value >= formSteps.length) return;
   error.value = null;
-  step.value = Math.min(formSteps.length, step.value + 1);
+  step.value += 1;
 }
 
 function prev() {
@@ -184,10 +302,21 @@ function addResponse() {
     name: "",
     path: "",
     type: "string",
-    required: false,
-    desc: "",
-    example: ""
+    checkMode: undefined,
+    checkValue: "",
+    desc: ""
   } satisfies InterfaceResponseField);
+}
+
+/** 勾选默认走「取值」，取消则整格清空 */
+function toggleCheck(row: InterfaceResponseField, checked: boolean) {
+  if (checked) {
+    row.checkMode = row.checkMode ?? "value";
+  } else {
+    row.checkMode = undefined;
+    row.checkValue = undefined;
+  }
+  error.value = null;
 }
 
 function removeResponse(index: number) {
@@ -262,13 +391,6 @@ function removeResponse(index: number) {
                 <span class="sec__hint">对接方看到的接口身份信息</span>
               </div>
               <form class="grid grid--4" @submit.prevent>
-                <div class="f f--4">
-                  <span class="f__label">所属合作方</span>
-                  <span class="f__static">
-                    {{ partnerName }}
-                    <em v-if="partnerCode">{{ partnerCode }}</em>
-                  </span>
-                </div>
                 <label
                   class="f f--2"
                   :class="{ 'is-error': isFieldError('name') }"
@@ -318,34 +440,60 @@ function removeResponse(index: number) {
                   <span class="f__label">请求路径</span>
                   <el-input
                     v-model="form.path"
-                    class="mono-field"
+                    class="mono-field input-with-select"
                     placeholder="/api/ent/base"
-                  />
-                  <span class="f__tip">相对合作方环境地址，以 / 开头</span>
+                  >
+                    <template #prepend>
+                      <el-select
+                        v-model="previewEnvId"
+                        class="env-select"
+                        placeholder="环境"
+                      >
+                        <el-option
+                          v-for="env in envs"
+                          :key="env.id"
+                          :label="env.name || env.code"
+                          :value="env.id"
+                        />
+                      </el-select>
+                    </template>
+                  </el-input>
+                  <span class="f__tip">
+                    以 / 开头；完整地址
+                    <b class="f__url" :title="previewUrl">{{
+                      previewUrl || "未配置环境地址"
+                    }}</b>
+                  </span>
                 </label>
                 <label class="f">
                   <span class="f__label">前置处理器</span>
-                  <el-select v-model="form.preProcessor" style="width: 100%">
-                    <el-option
-                      v-for="item in processorOptions"
-                      :key="item.value"
-                      :label="item.label"
-                      :value="item.value"
-                    />
+                  <el-select v-model="prePicker" style="width: 100%">
+                    <el-option label="模板解析器" value="template" />
+                    <el-option-group label="解析器库">
+                      <el-option
+                        v-for="item in listUsableParsers('pre')"
+                        :key="item.id"
+                        :label="item.name + '（' + item.code + '）'"
+                        :value="'parser:' + item.id"
+                      />
+                    </el-option-group>
                   </el-select>
                 </label>
                 <label class="f">
                   <span class="f__label">后置处理器</span>
-                  <el-select v-model="form.postProcessor" style="width: 100%">
-                    <el-option
-                      v-for="item in processorOptions"
-                      :key="item.value"
-                      :label="item.label"
-                      :value="item.value"
-                    />
+                  <el-select v-model="postPicker" style="width: 100%">
+                    <el-option label="模板解析器" value="template" />
+                    <el-option-group label="解析器库">
+                      <el-option
+                        v-for="item in listUsableParsers('post')"
+                        :key="item.id"
+                        :label="item.name + '（' + item.code + '）'"
+                        :value="'parser:' + item.id"
+                      />
+                    </el-option-group>
                   </el-select>
                 </label>
-                <label class="f f--4">
+                <label class="f f--2">
                   <span class="f__label">鉴权绑定</span>
                   <el-select
                     v-model="form.authId"
@@ -381,63 +529,62 @@ function removeResponse(index: number) {
                 </label>
               </form>
             </div>
-
-            <div class="sec">
-              <div class="sec__head">
-                <h2 class="sec__title">调用参数</h2>
-                <span class="sec__hint">留空的项沿用合作方默认值</span>
-              </div>
-              <form class="grid grid--4" @submit.prevent>
-                <label class="f" :class="{ 'is-error': isFieldError('price') }">
-                  <span class="f__label">单价</span>
-                  <el-input-number
-                    v-model="form.price"
-                    :min="0"
-                    :precision="4"
-                    :step="0.1"
-                    :controls="false"
-                    style="width: 100%"
-                  />
-                  <span class="f__tip">元 / 次，0 表示免费</span>
-                </label>
-                <label class="f">
-                  <span class="f__label">日上限</span>
-                  <el-input-number
-                    v-model="form.dailyLimit"
-                    :min="0"
-                    :step="1000"
-                    :controls="false"
-                    placeholder="不限"
-                    style="width: 100%"
-                  />
-                </label>
-                <label class="f">
-                  <span class="f__label">超时</span>
-                  <el-input-number
-                    v-model="form.timeout"
-                    :min="0"
-                    :step="500"
-                    :controls="false"
-                    placeholder="沿用合作方"
-                    style="width: 100%"
-                  />
-                  <span class="f__tip">毫秒</span>
-                </label>
-                <div class="f">
-                  <span class="f__label">启用状态</span>
-                  <el-switch
-                    v-model="form.enabled"
-                    inline-prompt
-                    active-text="启用"
-                    inactive-text="停用"
-                  />
-                </div>
-              </form>
-            </div>
           </div>
 
           <!-- ------------------------------ 第二步 ------------------------------ -->
           <div v-show="step === 2">
+            <div v-if="form.preProcessor === 'template'" class="tmpl">
+              <div class="sec__head">
+                <h2 class="sec__title">解析模板</h2>
+                <span class="sec__hint">
+                  模板解析器靠它把原始报文映射成下面的入参；改报文格式或前置处理器后自动隐藏
+                </span>
+              </div>
+              <CodeEditor
+                v-model="form.preTemplate"
+                height="200px"
+                class="tmpl__editor"
+                :class="{ 'is-error': !!templateError }"
+                :placeholder="templatePlaceholder"
+              />
+              <span v-if="templateError" class="tmpl__err">{{
+                templateError
+              }}</span>
+              <span v-else class="tmpl__tip"
+                >占位符写成 ${字段}，键名对应下面入参表里的参数名</span
+              >
+            </div>
+            <div
+              v-else-if="form.preProcessor === 'parser'"
+              class="tmpl tmpl--ref"
+            >
+              <div class="ref">
+                <span class="ref__label">引用的前置解析器</span>
+                <template v-if="preParser">
+                  <span class="ref__name">{{ preParser.name }}</span>
+                  <code class="ref__code">{{ preParser.code }}</code>
+                  <span class="ref__ver">v{{ preParser.scriptVersion }}</span>
+                  <el-button
+                    text
+                    size="small"
+                    class="ref__toggle"
+                    @click="showPreCode = !showPreCode"
+                  >
+                    {{ showPreCode ? "收起代码" : "查看代码" }}
+                  </el-button>
+                </template>
+                <span v-else class="tmpl__err"
+                  >引用的解析器已不存在，请重新选择</span
+                >
+              </div>
+              <CodeEditor
+                v-if="preParser && showPreCode"
+                :model-value="preParser.scriptCode"
+                readonly
+                height="240px"
+                class="tmpl__editor"
+              />
+            </div>
             <div class="sec">
               <div class="sec__head">
                 <h2 class="sec__title">请求入参</h2>
@@ -536,6 +683,59 @@ function removeResponse(index: number) {
 
           <!-- ------------------------------ 第三步 ------------------------------ -->
           <div v-show="step === 3">
+            <div v-if="form.postProcessor === 'template'" class="tmpl">
+              <div class="sec__head">
+                <h2 class="sec__title">响应映射模板</h2>
+                <span class="sec__hint">
+                  模板解析器靠它把网关返回映射成下面的出参；后置处理器切走或报文格式改成
+                  Form 后自动隐藏
+                </span>
+              </div>
+              <CodeEditor
+                v-model="form.postTemplate"
+                height="200px"
+                class="tmpl__editor"
+                :class="{ 'is-error': !!responseTemplateError }"
+                :placeholder="responseTemplatePlaceholder"
+              />
+              <span v-if="responseTemplateError" class="tmpl__err">{{
+                responseTemplateError
+              }}</span>
+              <span v-else class="tmpl__tip"
+                >键名对应下面出参表里的字段名，占位符写成 ${resp.路径}</span
+              >
+            </div>
+            <div
+              v-else-if="form.postProcessor === 'parser'"
+              class="tmpl tmpl--ref"
+            >
+              <div class="ref">
+                <span class="ref__label">引用的后置解析器</span>
+                <template v-if="postParser">
+                  <span class="ref__name">{{ postParser.name }}</span>
+                  <code class="ref__code">{{ postParser.code }}</code>
+                  <span class="ref__ver">v{{ postParser.scriptVersion }}</span>
+                  <el-button
+                    text
+                    size="small"
+                    class="ref__toggle"
+                    @click="showPostCode = !showPostCode"
+                  >
+                    {{ showPostCode ? "收起代码" : "查看代码" }}
+                  </el-button>
+                </template>
+                <span v-else class="tmpl__err"
+                  >引用的解析器已不存在，请重新选择</span
+                >
+              </div>
+              <CodeEditor
+                v-if="postParser && showPostCode"
+                :model-value="postParser.scriptCode"
+                readonly
+                height="240px"
+                class="tmpl__editor"
+              />
+            </div>
             <div class="sec">
               <div class="sec__head">
                 <h2 class="sec__title">响应出参</h2>
@@ -581,9 +781,48 @@ function removeResponse(index: number) {
                     />
                   </template>
                 </el-table-column>
-                <el-table-column label="必返" width="66" align="center">
-                  <template #default="{ row: item }">
-                    <el-switch v-model="item.required" size="small" />
+                <el-table-column width="252" align="left">
+                  <template #header>
+                    <span class="judge__head">
+                      查得字段
+                      <el-tooltip
+                        placement="top"
+                        content="勾选后校验该字段：取值=返回值必须等于期望值，非空=必须有值；勾了多行要同时满足。常用来判断「状态码 200 = 请求成功」。"
+                      >
+                        <span class="judge__help">?</span>
+                      </el-tooltip>
+                    </span>
+                  </template>
+                  <template #default="{ row: item, $index }">
+                    <div class="judge">
+                      <el-checkbox
+                        :model-value="!!item.checkMode"
+                        @change="(value: any) => toggleCheck(item, !!value)"
+                      />
+                      <template v-if="item.checkMode">
+                        <el-select
+                          v-model="item.checkMode"
+                          size="small"
+                          class="judge__mode"
+                        >
+                          <el-option
+                            v-for="opt in checkModeOptions"
+                            :key="opt.value"
+                            :label="opt.label"
+                            :value="opt.value"
+                          />
+                        </el-select>
+                        <el-input
+                          v-if="item.checkMode === 'value'"
+                          v-model="item.checkValue"
+                          class="cell-input mono-input judge__val"
+                          :class="{
+                            'is-error': isCellError($index, 'checkValue')
+                          }"
+                          placeholder="200"
+                        />
+                      </template>
+                    </div>
                   </template>
                 </el-table-column>
                 <el-table-column label="说明" min-width="170">
@@ -592,15 +831,6 @@ function removeResponse(index: number) {
                       v-model="item.desc"
                       class="cell-input"
                       placeholder="含义"
-                    />
-                  </template>
-                </el-table-column>
-                <el-table-column label="示例值" min-width="150">
-                  <template #default="{ row: item }">
-                    <el-input
-                      v-model="item.example"
-                      class="cell-input mono-input"
-                      placeholder="可选"
                     />
                   </template>
                 </el-table-column>
@@ -623,6 +853,202 @@ function removeResponse(index: number) {
             </div>
           </div>
 
+          <!-- ------------------------------ 第四步 ------------------------------ -->
+          <div v-show="step === 4">
+            <div class="sec">
+              <div class="sec__head">
+                <h2 class="sec__title">高级配置</h2>
+                <span class="sec__hint"
+                  >留空即沿用「{{
+                    partnerName
+                  }}」的配置，占位符里就是它当前的值</span
+                >
+              </div>
+
+              <div class="sec__sub">
+                <h3 class="sec__sub-title">计费</h3>
+                <form class="grid grid--4" @submit.prevent>
+                  <label
+                    class="f"
+                    :class="{ 'is-error': isFieldError('price') }"
+                  >
+                    <span class="f__label">单价（元 / 次）</span>
+                    <el-input-number
+                      v-model="form.price"
+                      :min="0"
+                      :step="0.1"
+                      :controls="false"
+                      :placeholder="fallback.price"
+                      style="width: 100%"
+                    />
+                  </label>
+                  <label
+                    class="f"
+                    :class="{ 'is-error': isFieldError('dailyLimit') }"
+                  >
+                    <span class="f__label">日上限（次 / 天）</span>
+                    <el-input-number
+                      v-model="form.dailyLimit"
+                      :min="0"
+                      :step="1000"
+                      :controls="false"
+                      :placeholder="fallback.dailyLimit"
+                      style="width: 100%"
+                    />
+                  </label>
+                  <label
+                    class="f"
+                    :class="{ 'is-error': isFieldError('timeout') }"
+                  >
+                    <span class="f__label">超时（毫秒）</span>
+                    <el-input-number
+                      v-model="form.timeout"
+                      :min="0"
+                      :step="500"
+                      :controls="false"
+                      :placeholder="fallback.timeout"
+                      style="width: 100%"
+                    />
+                  </label>
+                  <div class="f">
+                    <span class="f__label">启用状态</span>
+                    <el-switch
+                      v-model="form.enabled"
+                      inline-prompt
+                      active-text="启用"
+                      inactive-text="停用"
+                    />
+                  </div>
+                </form>
+              </div>
+
+              <div class="sec__sub">
+                <h3 class="sec__sub-title">流控</h3>
+                <form class="grid grid--4" @submit.prevent>
+                  <label class="f" :class="{ 'is-error': isFieldError('qps') }">
+                    <span class="f__label">QPS 上限（次 / 秒）</span>
+                    <el-input-number
+                      v-model="form.qps"
+                      :min="0"
+                      :step="1"
+                      :controls="false"
+                      :placeholder="fallback.qps"
+                      style="width: 100%"
+                    />
+                  </label>
+                  <label
+                    class="f"
+                    :class="{ 'is-error': isFieldError('concurrency') }"
+                  >
+                    <span class="f__label">并发上限</span>
+                    <el-input-number
+                      v-model="form.concurrency"
+                      :min="0"
+                      :step="10"
+                      :controls="false"
+                      :placeholder="fallback.concurrency"
+                      style="width: 100%"
+                    />
+                  </label>
+                  <label
+                    class="f"
+                    :class="{ 'is-error': isFieldError('retryTimes') }"
+                  >
+                    <span class="f__label">失败重试（次）</span>
+                    <el-input-number
+                      v-model="form.retryTimes"
+                      :min="0"
+                      :step="1"
+                      :controls="false"
+                      :placeholder="fallback.retryTimes"
+                      style="width: 100%"
+                    />
+                  </label>
+                  <label
+                    class="f"
+                    :class="{ 'is-error': isFieldError('retryInterval') }"
+                  >
+                    <span class="f__label">重试间隔（毫秒）</span>
+                    <el-input-number
+                      v-model="form.retryInterval"
+                      :min="0"
+                      :step="100"
+                      :controls="false"
+                      :placeholder="fallback.retryInterval"
+                      style="width: 100%"
+                    />
+                  </label>
+                  <label
+                    class="f"
+                    :class="{ 'is-error': isFieldError('breakerThreshold') }"
+                  >
+                    <span class="f__label">熔断失败阈值（次）</span>
+                    <el-input-number
+                      v-model="form.breakerThreshold"
+                      :min="0"
+                      :step="5"
+                      :controls="false"
+                      :placeholder="fallback.breakerThreshold"
+                      style="width: 100%"
+                    />
+                  </label>
+                  <label
+                    class="f"
+                    :class="{ 'is-error': isFieldError('breakerRecoverMin') }"
+                  >
+                    <span class="f__label">熔断恢复（分钟）</span>
+                    <el-input-number
+                      v-model="form.breakerRecoverMin"
+                      :min="0"
+                      :step="1"
+                      :controls="false"
+                      :placeholder="fallback.breakerRecoverMin"
+                      style="width: 100%"
+                    />
+                  </label>
+                </form>
+              </div>
+
+              <div class="sec__sub">
+                <h3 class="sec__sub-title">缓存</h3>
+                <form class="grid grid--4" @submit.prevent>
+                  <div
+                    class="f f--4"
+                    :class="{ 'is-error': isFieldError('cacheTtl') }"
+                  >
+                    <span class="f__label f__label--req">缓存设置</span>
+                    <div class="cache">
+                      <el-switch
+                        v-model="form.cacheEnabled"
+                        active-text="开启"
+                      />
+                      <el-input-number
+                        v-model="form.cacheTtl"
+                        :min="1"
+                        :disabled="!form.cacheEnabled"
+                        :controls="false"
+                        :placeholder="fallback.cacheTtl"
+                        style="width: 160px"
+                      />
+                      <el-select
+                        v-model="form.cacheUnit"
+                        :disabled="!form.cacheEnabled"
+                        style="width: 110px"
+                      >
+                        <el-option
+                          v-for="item in cacheUnitOptions"
+                          :key="item.value"
+                          :label="item.label"
+                          :value="item.value"
+                        />
+                      </el-select>
+                    </div>
+                    <span class="f__tip">{{ fallback.cacheText }}</span>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
           <div class="ix-actions">
             <el-button v-if="step > 1" size="small" @click="prev">
               上一步
@@ -884,10 +1310,78 @@ html.dark .ix {
   border-radius: 10px;
 }
 
+/* ------------------------------- 解析模板 ------------------------------- */
+.tmpl {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line-soft);
+
+  /* 引用解析器时的一行摘要：名称 + 标识 + 版本 + 查看代码 */
+  &--ref .ref {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+
+    &__label {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    &__name {
+      font-size: 13px;
+      color: var(--ink);
+    }
+
+    &__code {
+      font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    &__ver {
+      padding: 0 6px;
+      font-size: 11px;
+      line-height: 18px;
+      color: var(--ink-2);
+      background: var(--wash);
+      border-radius: 3px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    &__toggle {
+      margin-left: auto;
+    }
+  }
+
+  /* 代码编辑器固定暗色，不再跟 --wash 走；出错只改它的边框色 */
+  &__editor {
+    :deep(.cm-editor) {
+      border-radius: 4px;
+    }
+
+    &.is-error :deep(.cm-editor) {
+      border-color: var(--el-color-danger);
+    }
+  }
+
+  &__tip {
+    display: block;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  &__err {
+    display: block;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--el-color-danger);
+  }
+}
+
 /* ------------------------------- 分区 ------------------------------- */
 .sec {
   padding: 20px 0;
-
   & + & {
     border-top: 1px solid var(--line-soft);
   }
@@ -909,6 +1403,19 @@ html.dark .ix {
   &__hint {
     font-size: 12px;
     color: var(--muted);
+  }
+
+  /** 高级配置里的三个小节（计费 / 流控 / 缓存） */
+  &__sub {
+    padding: 16px 0;
+    border-top: 1px dashed var(--line-soft);
+  }
+
+  &__sub-title {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-2);
   }
 }
 
@@ -941,10 +1448,30 @@ html.dark .ix {
   &--4 {
     grid-column: span 4;
   }
+  /* 请求路径：EP 复合输入框，环境下拉放在前置区（prepend） */
+  &__url {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-weight: 400;
+    color: var(--ink-2);
+  }
 
   &__label {
     font-size: 12px;
     color: var(--muted);
+
+    /** 必填标记：与 el-form 的 required 星号视觉一致 */
+    &--req::before {
+      content: "*";
+      margin-right: 4px;
+      color: var(--el-color-danger);
+    }
+  }
+
+  /** 一行里并排放开关 + 数值 + 单位下拉（缓存设置） */
+  .cache {
+    display: flex;
+    gap: 12px;
+    align-items: center;
   }
 
   &__tip {
@@ -956,6 +1483,11 @@ html.dark .ix {
   &__err {
     font-size: 11px;
     color: var(--el-color-danger);
+  }
+
+  :deep(.el-input-number .el-input__inner) {
+    text-align: left;
+    font-variant-numeric: tabular-nums;
   }
 
   &__static {
@@ -987,6 +1519,45 @@ html.dark .ix {
   font-size: 12px;
 }
 
+/* 请求路径的复合输入框：环境下拉在前置区，底色调成和输入框一致 */
+.input-with-select :deep(.el-input-group__prepend) {
+  width: 116px;
+  padding: 0;
+  overflow: hidden;
+  background-color: var(--el-fill-color-blank);
+}
+
+/* EP 默认给 prepend 里的 select 写了 flex:1 + margin:0 -20px（用来抵消 padding），
+   这里 padding 已归零，负 margin 会直接溢出压住输入框，必须抵消掉 */
+.input-with-select :deep(.el-input-group__prepend .el-select) {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+.input-with-select :deep(.el-input-group__prepend .el-select__wrapper) {
+  height: 100%;
+  min-height: 0;
+  padding: 0 8px 0 10px;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* EP 默认 flex-wrap: wrap，长标签会换行把输入框撑高；这里强制单行 + 省略号 */
+.input-with-select :deep(.el-input-group__prepend .el-select__selected-item) {
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.input-with-select :deep(.el-input-group__prepend .el-select__placeholder) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .kv {
   padding: 1px 5px;
   margin-right: 6px;
@@ -999,6 +1570,50 @@ html.dark .ix {
 }
 
 /* ------------------------------- 可编辑表 ------------------------------- */
+/* 查得字段列：勾选框 + 取值/非空 + 期望值（一行三控，不许换行） */
+.editable .judge {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-start;
+
+  :deep(.el-checkbox) {
+    flex: 0 0 auto;
+    height: auto;
+    margin-right: 0;
+  }
+
+  :deep(.el-select) {
+    flex: 0 0 88px;
+    width: 88px;
+  }
+
+  :deep(.el-input) {
+    flex: 0 0 88px;
+    width: 88px;
+  }
+
+  &__head {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+  }
+
+  &__help {
+    display: inline-flex;
+    width: 14px;
+    height: 14px;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: var(--muted);
+    cursor: help;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+  }
+}
+
 .editable {
   :deep(.el-table__cell) {
     padding: 4px 6px;

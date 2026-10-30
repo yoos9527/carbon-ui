@@ -47,16 +47,22 @@ src/views/service/partners/
 ├── index.vue          # 列表页（搜索区 + PureTableBar + pure-table）
 ├── data.ts            # 类型 + mock 数据 + 查询/写操作 helper
 ├── csv.ts             # 导入导出：列定义 / toCsv / toCsvTemplate / planImport / applyImport
-├── detail.vue         # 详情页（左侧目录 + 字段网格）
+├── detail.vue         # 详情页（左侧步骤条：环境与网络 / 认证与鉴权 / 高级配置 + 字段网格）
 ├── SPEC.md            # 本模块规格（结构、契约、视觉细则）
 └── components/        # 该页面专用的弹窗 / 子组件
 
 src/views/service/interfaces/
 ├── index.vue          # 列表页（跨合作方扁平化为接口行）
-├── edit.vue           # 分步表单：请求信息+调用参数 / 入参 / 出参（路由在 remaining.ts）
+├── edit.vue           # 分步表单：基本信息/入参/出参/高级配置（计费·流控·缓存）（路由在 remaining.ts）
 ├── data.ts            # 跨合作方聚合 + 分步校验 validateStep
 ├── csv.ts
 └── SPEC.md
+
+src/views/service/parsers/
+├── index.vue          # 列表页（类型 / 关联接口数 / 版本）
+├── data.ts            # 解析器库 + 版本快照 + 引用计数
+├── SPEC.md
+└── components/        # ParserDrawer（CodeEditor + 历史版本回滚）
 ```
 
 - 页面数据一律先放 `data.ts`：`export interface XxxItem` + `mockXxx` 数组 + `getXxxById()`。接后端时只替换 helper 的实现，页面不动。
@@ -66,27 +72,27 @@ src/views/service/interfaces/
 
 ## 6. UI 设计规范（统一，新页面照抄）
 
-权威细则在两份 SPEC 里，这里只是施工速查：`src/views/service/partners/SPEC.md`（详情页 / 字段区 / 弹窗 / 导入导出 / 按钮层级）、`src/views/service/interfaces/SPEC.md`（列表页骨架 / 分步表单三件套）。**改一处视觉必须同步另一份 SPEC**，两个列表页的按钮与工具栏是同一套规范。
+权威细则在三份 SPEC 里，这里只是施工速查：`src/views/service/partners/SPEC.md`（详情页 / 字段区 / 弹窗 / 导入导出 / 按钮层级）、`src/views/service/interfaces/SPEC.md`（列表页骨架 / 四步表单）、`src/views/service/parsers/SPEC.md`（抽屉 + 代码编辑器 + 版本列表）。**改一处视觉必须同步其余 SPEC**，三个列表页的按钮与工具栏是同一套规范。
 
 ### 6.1 设计令牌（唯一允许出现色值的地方）
 
 令牌定义在页面根容器（如 `.pd`、`.ix`、`.ix-list`），默认是亮色一套，同一组变量在 `html.dark` 里整体覆盖：
 
-| 令牌 | 亮色 | 暗色 | 用途 |
-|---|---|---|---|
-| `--ink` | `#16233a` | `#e6ebf5` | 主文字、标题 |
-| `--ink-2` | `#46536e` | `#a7b2c7` | 次级文字、表格正文 |
-| `--muted` | `#8792a8` | `#7a879e` | label、说明、占位 |
-| `--line` | `#e6eaf2` | `#262d3b` | 常规分隔线、卡片边框 |
-| `--line-soft` | `#eef1f7` | `#1e242f` | 行内浅分隔 |
-| `--surface` | `#fff` | `#151a23` | 卡片 / 面板底 |
-| `--canvas` | `#f4f6fa` | `#020409` | 页面底色 |
-| `--wash` | `#fafbfd` | `#1a2029` | 弱底：提示块、底栏、悬停行外框 |
-| `--hover` | `#f4f6fa` | `#1d232e` | 悬停态背景 |
-| `--track` | `#e9edf5` | `#232a36` | 进度条槽、骨架 |
-| `--mix` / `--mix-ink` | `#fff` / `#0b1a33` | `#151a23` / `#e8eefc` | 专供 `color-mix()` 掺色 |
+| 令牌                         | 亮色                              | 暗色                              | 用途                                                                    |
+| ---------------------------- | --------------------------------- | --------------------------------- | ----------------------------------------------------------------------- |
+| `--ink`                      | `#16233a`                         | `#e6ebf5`                         | 主文字、标题                                                            |
+| `--ink-2`                    | `#46536e`                         | `#a7b2c7`                         | 次级文字、表格正文                                                      |
+| `--muted`                    | `#8792a8`                         | `#7a879e`                         | label、说明、占位                                                       |
+| `--line`                     | `#e6eaf2`                         | `#262d3b`                         | 常规分隔线、卡片边框                                                    |
+| `--line-soft`                | `#eef1f7`                         | `#1e242f`                         | 行内浅分隔                                                              |
+| `--surface`                  | `#fff`                            | `#151a23`                         | 卡片 / 面板底                                                           |
+| `--canvas`                   | `#f4f6fa`                         | `#020409`                         | 页面底色                                                                |
+| `--wash`                     | `#fafbfd`                         | `#1a2029`                         | 弱底：提示块、底栏、悬停行外框                                          |
+| `--hover`                    | `#f4f6fa`                         | `#1d232e`                         | 悬停态背景                                                              |
+| `--track`                    | `#e9edf5`                         | `#232a36`                         | 进度条槽、骨架                                                          |
+| `--mix` / `--mix-ink`        | `#fff` / `#0b1a33`                | `#151a23` / `#e8eefc`             | 专供 `color-mix()` 掺色                                                 |
 | `--on` / `--warn` / `--code` | `#0f9d58` / `#c77700` / `#6b4dff` | `#3fbf7f` / `#e0a33a` / `#9d8bff` | 启用绿 / 警告琥珀 / 标识紫（暗色需提亮，原色在 `#151a23` 上对比度不够） |
-| `--accent` | `var(--el-color-primary)` | 同左 | 跟随主题色，不写死蓝 |
+| `--accent`                   | `var(--el-color-primary)`         | 同左                              | 跟随主题色，不写死蓝                                                    |
 
 - **页面里禁止出现裸 `#hex`**，新配色先加令牌再引用；`rgba(...)` 只允许用在遮罩 / 阴影。
 - 暗色不做「另一套类名」：同一个 `.xxx` 在 `html.dark .xxx` 下只覆盖变量，选择器与布局零改动。scoped 组件里写 `html.dark .pd` 就够（`data-v` 只加在最后一个复合选择器上）。
@@ -108,18 +114,20 @@ src/views/service/interfaces/
 
 ### 6.3 按钮层级（两页共用，返工过四轮，别再发明）
 
-| 角色 | 写法 | 例子 |
-|---|---|---|
-| 主操作 | `type="primary" plain` | 新增、查询 |
-| 危险 | `type="danger" plain` | 批量删除、删除、停用 |
-| 次要 | 裸 `plain` | 导入、导出、重置、模板下载 |
-| 行内 | `size="small" plain` + 语义色 | 编辑/配置(primary)、启用(success)、停用/删除(danger) |
+| 角色   | 写法                          | 例子                                                 |
+| ------ | ----------------------------- | ---------------------------------------------------- |
+| 主操作 | `type="primary" plain`        | 新增、查询                                           |
+| 危险   | `type="danger" plain`         | 批量删除、删除、停用                                 |
+| 次要   | 裸 `plain`                    | 导入、导出、重置、模板下载                           |
+| 行内   | `size="small" plain` + 语义色 | 编辑/配置(primary)、启用(success)、停用/删除(danger) |
 
 - **禁止实底按钮**：EP 2.11 的 `plain` 本来就不改背景色，实底 `type="primary"` 会和旁边描边按钮混成两种风格。
 - 文案带宾语是错的：工具栏一律「新增」，不写「新增合作方 / 新增接口」。
 - 批量删除**不置灰**（浅粉禁用态和旁边的白底描边按钮对不齐），未勾选时点击 `ElMessage.warning("请先勾选…")`。
 
 ### 6.4 详情页 / 字段区
+
+- 详情页左侧导航用**步骤条**（`.step` 序号圆点 + 标题，见 `partners/detail.vue`），不是裸 tab 文字；**多块配置能合并就合并成一页**（合作方把「调用策略 + 计费与额度」合成第 3 步「高级配置」，内部用 `.sec__sub` + `grid--4` 分小节）。
 
 - 字段区：`<dl class="grid">`，label（12px `var(--muted)`）在上、值（13px）在下，`gap: 18px 32px`，**不要边框**；列表型数据（如多环境）用 `.alist` 三列表格，不要塞进 `<dl>`。
 - 数字 `font-variant-numeric: tabular-nums`；URL / 编码 / AppKey / 脚本用 `ui-monospace, "Cascadia Mono", Consolas`。
@@ -132,6 +140,7 @@ src/views/service/interfaces/
 - `el-dialog` / `el-drawer` 的节点挂在 body，拿不到 scoped 的 `data-v`，`:deep()` 会空转 → 一律 `:global(.xxx)`。
 - 校验只在「下一步 / 保存」时跑，出错只给控件描红（`.f.is-error` / `.cell-input.is-error`），不整页报红。
 - 文案：标题 + 一句说明，不写「请在此处…」这类废话；确认框写清后果（「停用后该合作方下的接口将拒绝新的调用请求」）。
+- 任何代码输入一律用 `@/components/CodeEditor`（CodeMirror + Groovy 高亮），**固定暗色，不跟站点主题**；不要再拿 `el-input type="textarea"` 自绘浅底代码框。出错只改 `.cm-editor` 的边框色。
 
 ## 7. 提交
 

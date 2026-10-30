@@ -19,6 +19,63 @@ import {
   type ProcessorType
 } from "../partners/data";
 import type { InterfaceRow } from "./data";
+import { getParserById, mockParsers } from "../parsers/data";
+
+/** 处理器列的可读值：内联模板写「模板解析器」，引用解析器写它的标识 */
+function processorCell(
+  processor: ProcessorType | undefined,
+  parserId: number | undefined
+): string {
+  if (processor === "parser") return getParserById(parserId)?.code ?? "";
+  if (processor === "template") return "模板解析器";
+  return "";
+}
+
+/**
+ * 反向解析处理器列：空 = 不过处理器；「模板解析器」= 内联模板；
+ * 其它值按解析器标识查库（类型必须匹配，找不到就报错不猜）。
+ */
+type ProcessorPatch = Partial<
+  Pick<
+    PartnerInterfaceItem,
+    "preProcessor" | "preParserId" | "postProcessor" | "postParserId"
+  >
+>;
+
+function parseProcessorCell(
+  raw: string | undefined,
+  kind: "pre" | "post",
+  line: number,
+  issues: ImportIssue[]
+): ProcessorPatch {
+  const value = (raw ?? "").trim();
+  if (!value) return {};
+  if (value === "模板解析器") {
+    return kind === "pre"
+      ? { preProcessor: "template" }
+      : { postProcessor: "template" };
+  }
+  const parser = mockParsers.find(
+    item => item.code.toLowerCase() === value.toLowerCase()
+  );
+  if (!parser) {
+    issues.push({
+      line,
+      message: `${kind === "pre" ? "前置" : "后置"}处理器「${value}」在解析器库里不存在`
+    });
+    return {};
+  }
+  if (parser.kind !== kind) {
+    issues.push({
+      line,
+      message: `「${value}」是${parser.kind === "pre" ? "前置" : "后置"}解析器，不能用在${kind === "pre" ? "前置" : "后置"}处理器上`
+    });
+    return {};
+  }
+  return kind === "pre"
+    ? { preProcessor: "parser", preParserId: parser.id }
+    : { postProcessor: "parser", postParserId: parser.id };
+}
 
 export const CSV_HEADERS = [
   "合作方编码",
@@ -84,8 +141,8 @@ export function toCsv(rows: InterfaceRow[]): string {
         row.dailyLimit ?? "",
         row.timeout ?? "",
         row.enabled ? "是" : "否",
-        row.preProcessor ?? "none",
-        row.postProcessor ?? "none",
+        processorCell(row.preProcessor, row.preParserId),
+        processorCell(row.postProcessor, row.postParserId),
         JSON.stringify(row.params ?? []),
         JSON.stringify(row.responses ?? []),
         row.createTime ?? ""
@@ -202,8 +259,6 @@ const FIELD_TYPES: FieldType[] = [
   "date"
 ];
 const LOCATIONS: ParamLocation[] = ["query", "body", "path", "header"];
-const PROCESSORS: ProcessorType[] = ["none", "groovy"];
-
 const pick = <T extends string>(value: string, allowed: T[], fallback: T): T =>
   allowed.includes(value.trim() as T) ? (value.trim() as T) : fallback;
 
@@ -243,12 +298,17 @@ const toResponses = (raw: string, line: number, issues: ImportIssue[]) => {
       name: String(item.name ?? "").trim(),
       path: String(item.path ?? "").trim(),
       type: pick(String(item.type ?? "string"), FIELD_TYPES, "string"),
-      required: Boolean(item.required),
-      desc: item.desc ? String(item.desc) : undefined,
-      example:
-        item.example === undefined || item.example === null
+      checkMode:
+        item.checkMode === "notEmpty"
+          ? "notEmpty"
+          : item.checkMode === "value"
+            ? "value"
+            : undefined,
+      checkValue:
+        item.checkValue === undefined || item.checkValue === null
           ? undefined
-          : String(item.example)
+          : String(item.checkValue),
+      desc: item.desc ? String(item.desc) : undefined
     })) as InterfaceResponseField[];
   } catch (error) {
     issues.push({
@@ -387,8 +447,8 @@ export function planImport(text: string): ImportPlan {
         dailyLimit: parseNumber(dailyLimit),
         timeout: parseNumber(timeout),
         enabled: enabled === undefined ? true : parseBool(enabled),
-        preProcessor: pick(preProcessor ?? "none", PROCESSORS, "none"),
-        postProcessor: pick(postProcessor ?? "none", PROCESSORS, "none"),
+        ...parseProcessorCell(preProcessor, "pre", line, issues),
+        ...parseProcessorCell(postProcessor, "post", line, issues),
         params: toParams(params ?? "", line, issues),
         responses: toResponses(responses ?? "", line, issues)
       }

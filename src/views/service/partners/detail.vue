@@ -4,7 +4,9 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   billingTypeOptions,
+  cacheUnitOptions,
   createEmptyEnv,
+  getCacheUnitLabel,
   getAuthTypeLabel,
   getPartnerById,
   getStatusOption,
@@ -33,8 +35,17 @@ type EnvForm = Pick<
   | "proxyUrl"
 >;
 
-type StrategyForm = Pick<
+/** 高级配置一步同时编辑计费、流控、缓存，所以合成一个类型 */
+type AdvancedForm = Pick<
   PartnerItem,
+  | "billingType"
+  | "unitPrice"
+  | "settleType"
+  | "contractNo"
+  | "balance"
+  | "quotaTotal"
+  | "quotaUsed"
+  | "warnThreshold"
   | "qps"
   | "dailyLimit"
   | "concurrency"
@@ -42,20 +53,10 @@ type StrategyForm = Pick<
   | "retryInterval"
   | "breakerThreshold"
   | "breakerRecoverMin"
-  | "cacheTtl"
   | "alarmReceiver"
->;
-
-type BillingForm = Pick<
-  PartnerItem,
-  | "billingType"
-  | "unitPrice"
-  | "quotaTotal"
-  | "quotaUsed"
-  | "warnThreshold"
-  | "settleType"
-  | "balance"
-  | "contractNo"
+  | "cacheEnabled"
+  | "cacheTtl"
+  | "cacheUnit"
 >;
 
 const route = useRoute();
@@ -63,11 +64,10 @@ const router = useRouter();
 
 const activeTab = ref("env");
 const detail = ref<PartnerItem | null>(null);
-/** 当前处于编辑态的 Tab，空串为全部只读 */
-const editingTab = ref<"" | "env" | "strategy" | "billing">("");
+/** 当前处于编辑态的步骤，空串为全部只读（认证与鉴权走弹窗，不进这里） */
+const editingTab = ref<"" | "env" | "advanced">("");
 const envForm = ref<EnvForm | null>(null);
-const strategyForm = ref<StrategyForm | null>(null);
-const billingForm = ref<BillingForm | null>(null);
+const advancedForm = ref<AdvancedForm | null>(null);
 
 const authDialogVisible = ref(false);
 const editingAuth = ref<AuthConfig | null>(null);
@@ -194,10 +194,18 @@ function saveEnv() {
   ElMessage.success("环境与网络已保存");
 }
 
-function startEditStrategy() {
+function startEditAdvanced() {
   const partner = detail.value;
   if (!partner) return;
-  strategyForm.value = {
+  advancedForm.value = {
+    billingType: partner.billingType,
+    unitPrice: partner.unitPrice,
+    settleType: partner.settleType,
+    contractNo: partner.contractNo,
+    balance: partner.balance,
+    quotaTotal: partner.quotaTotal,
+    quotaUsed: partner.quotaUsed,
+    warnThreshold: partner.warnThreshold,
     qps: partner.qps,
     dailyLimit: partner.dailyLimit,
     concurrency: partner.concurrency,
@@ -205,48 +213,29 @@ function startEditStrategy() {
     retryInterval: partner.retryInterval,
     breakerThreshold: partner.breakerThreshold,
     breakerRecoverMin: partner.breakerRecoverMin,
+    alarmReceiver: partner.alarmReceiver,
+    cacheEnabled: partner.cacheEnabled,
     cacheTtl: partner.cacheTtl,
-    alarmReceiver: partner.alarmReceiver
+    cacheUnit: partner.cacheUnit
   };
-  editingTab.value = "strategy";
+  editingTab.value = "advanced";
 }
 
-function saveStrategy() {
+function saveAdvanced() {
   const partner = detail.value;
-  const form = strategyForm.value;
-  if (!partner || !form) return;
-  Object.assign(partner, form);
-  editingTab.value = "";
-  ElMessage.success("调用策略已保存");
-}
-
-function startEditBilling() {
-  const partner = detail.value;
-  if (!partner) return;
-  billingForm.value = {
-    billingType: partner.billingType,
-    unitPrice: partner.unitPrice,
-    quotaTotal: partner.quotaTotal,
-    quotaUsed: partner.quotaUsed,
-    warnThreshold: partner.warnThreshold,
-    settleType: partner.settleType,
-    balance: partner.balance,
-    contractNo: partner.contractNo
-  };
-  editingTab.value = "billing";
-}
-
-function saveBilling() {
-  const partner = detail.value;
-  const form = billingForm.value;
+  const form = advancedForm.value;
   if (!partner || !form) return;
   if (form.quotaUsed > form.quotaTotal) {
     ElMessage.warning("已用额度不能大于套餐总量");
     return;
   }
+  if (form.cacheEnabled && !form.cacheTtl) {
+    ElMessage.warning("开启缓存时需填写缓存时长");
+    return;
+  }
   Object.assign(partner, form);
   editingTab.value = "";
-  ElMessage.success("计费与额度已保存");
+  ElMessage.success("高级配置已保存");
 }
 
 function cancelEdit() {
@@ -339,7 +328,9 @@ async function removeAuth(auth: AuthConfig) {
         <el-tabs v-model="activeTab" tab-position="left" class="pd-tabs">
           <!-- ---------------------- 环境与网络 ---------------------- -->
           <el-tab-pane name="env">
-            <template #label><span class="navtab">环境与网络</span></template>
+            <template #label
+              ><span class="step"><i>1</i>环境与网络</span></template
+            >
             <section class="sec">
               <div class="sec__head">
                 <div>
@@ -389,6 +380,10 @@ async function removeAuth(auth: AuthConfig) {
                 </div>
                 <p v-if="!detail.envs.length" class="empty-inline">
                   尚未配置接入地址
+                </p>
+                <p class="f__note env-linked">
+                  接口的完整调用地址 = 第一条环境的地址 + 接口路径（
+                  {{ detail.interfaces?.length ?? 0 }} 个接口会跟着变）
                 </p>
 
                 <dl class="grid grid--2">
@@ -536,361 +531,11 @@ async function removeAuth(auth: AuthConfig) {
             </section>
           </el-tab-pane>
 
-          <!-- ---------------------- 调用策略 ---------------------- -->
-          <el-tab-pane name="strategy">
-            <template #label><span class="navtab">调用策略</span></template>
-            <section class="sec">
-              <div class="sec__head">
-                <div>
-                  <h2 class="sec__title">调用策略</h2>
-                  <p class="sec__hint">
-                    限流、重试、熔断与缓存，作用于该合作方下的全部接口
-                  </p>
-                </div>
-                <el-button
-                  v-if="editingTab !== 'strategy'"
-                  text
-                  :icon="EditIcon"
-                  class="sec__edit"
-                  @click="startEditStrategy"
-                >
-                  编辑
-                </el-button>
-              </div>
-
-              <dl v-if="editingTab !== 'strategy'" class="grid grid--3">
-                <div class="f">
-                  <dt class="f__k">限流（QPS）</dt>
-                  <dd class="f__v num">{{ detail.qps }}</dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">日调用上限（次）</dt>
-                  <dd class="f__v num">
-                    {{ detail.dailyLimit.toLocaleString() }}
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">并发数</dt>
-                  <dd class="f__v num">{{ detail.concurrency }}</dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">失败重试（次）</dt>
-                  <dd class="f__v num">
-                    {{ detail.retryTimes }}
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">重试间隔（ms）</dt>
-                  <dd class="f__v num">{{ detail.retryInterval }}</dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">结果缓存（秒）</dt>
-                  <dd class="f__v num">
-                    {{ detail.cacheTtl ? detail.cacheTtl : "—" }}
-                  </dd>
-                  <span v-if="!detail.cacheTtl" class="f__note">不缓存</span>
-                </div>
-                <div class="f">
-                  <dt class="f__k">熔断阈值（次）</dt>
-                  <dd class="f__v num">
-                    {{ detail.breakerThreshold }}
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">熔断恢复（分钟）</dt>
-                  <dd class="f__v num">
-                    {{ detail.breakerRecoverMin }}
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">告警接收人</dt>
-                  <dd class="f__v">{{ detail.alarmReceiver || "—" }}</dd>
-                </div>
-              </dl>
-
-              <form v-else-if="strategyForm" class="grid grid--3 grid--edit">
-                <div class="f">
-                  <label class="f__k">限流（QPS）</label>
-                  <el-input-number
-                    v-model="strategyForm.qps"
-                    :min="1"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">日调用上限（次）</label>
-                  <el-input-number
-                    v-model="strategyForm.dailyLimit"
-                    :min="0"
-                    :step="1000"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">并发数</label>
-                  <el-input-number
-                    v-model="strategyForm.concurrency"
-                    :min="1"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">失败重试（次）</label>
-                  <el-input-number
-                    v-model="strategyForm.retryTimes"
-                    :min="0"
-                    :max="5"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">重试间隔（ms）</label>
-                  <el-input-number
-                    v-model="strategyForm.retryInterval"
-                    :min="0"
-                    :step="100"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">结果缓存（秒）</label>
-                  <el-input-number
-                    v-model="strategyForm.cacheTtl"
-                    :min="0"
-                    :step="60"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">熔断阈值（次）</label>
-                  <el-input-number
-                    v-model="strategyForm.breakerThreshold"
-                    :min="1"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">熔断恢复（分钟）</label>
-                  <el-input-number
-                    v-model="strategyForm.breakerRecoverMin"
-                    :min="1"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">告警接收人</label>
-                  <el-input
-                    v-model="strategyForm.alarmReceiver"
-                    placeholder="邮箱或用户名"
-                  />
-                </div>
-              </form>
-
-              <div v-if="editingTab === 'strategy'" class="editbar">
-                <span class="editbar__tip">修改后需保存才会生效</span>
-                <el-button @click="cancelEdit">取消</el-button>
-                <el-button type="primary" @click="saveStrategy">保存</el-button>
-              </div>
-            </section>
-          </el-tab-pane>
-
-          <!-- ---------------------- 计费与额度 ---------------------- -->
-          <el-tab-pane name="billing">
-            <template #label><span class="navtab">计费与额度</span></template>
-            <section class="sec">
-              <div class="sec__head">
-                <div>
-                  <h2 class="sec__title">计费与额度</h2>
-                  <p class="sec__hint">计费方式、套餐额度与结算信息</p>
-                </div>
-                <el-button
-                  v-if="editingTab !== 'billing'"
-                  text
-                  :icon="EditIcon"
-                  class="sec__edit"
-                  @click="startEditBilling"
-                >
-                  编辑
-                </el-button>
-              </div>
-
-              <div v-if="editingTab !== 'billing'" class="meter-wrap">
-                <div class="meter">
-                  <div class="meter__head">
-                    <span>套餐额度使用</span>
-                    <b
-                      class="num"
-                      :class="{
-                        'is-warn':
-                          quotaUsedPercent >= 100 - detail.warnThreshold
-                      }"
-                      >{{ quotaUsedPercent }}%</b
-                    >
-                  </div>
-                  <div class="meter__track">
-                    <i
-                      :style="{ width: `${quotaUsedPercent}%` }"
-                      :class="{
-                        'is-warn':
-                          quotaUsedPercent >= 100 - detail.warnThreshold
-                      }"
-                    />
-                  </div>
-                  <p class="meter__note">
-                    已用 {{ detail.quotaUsed.toLocaleString() }} / 共
-                    {{ detail.quotaTotal.toLocaleString() }}， 低于
-                    {{ detail.warnThreshold }}% 时告警
-                  </p>
-                </div>
-              </div>
-
-              <dl v-if="editingTab !== 'billing'" class="grid grid--3">
-                <div class="f">
-                  <dt class="f__k">计费方式</dt>
-                  <dd class="f__v">
-                    {{
-                      billingTypeOptions.find(
-                        item => item.value === detail.billingType
-                      )?.label
-                    }}
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">默认单价（元/次）</dt>
-                  <dd class="f__v num">
-                    {{ detail.unitPrice }}
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">结算周期</dt>
-                  <dd class="f__v">
-                    {{
-                      settleTypeOptions.find(
-                        item => item.value === detail.settleType
-                      )?.label
-                    }}
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">套餐总量</dt>
-                  <dd class="f__v num">
-                    {{ detail.quotaTotal.toLocaleString() }}
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">已用额度</dt>
-                  <dd class="f__v num">
-                    {{ detail.quotaUsed.toLocaleString() }}
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">预警阈值（%）</dt>
-                  <dd class="f__v num">
-                    {{ detail.warnThreshold }}
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">账户余额（元）</dt>
-                  <dd class="f__v num">
-                    {{ detail.balance.toLocaleString() }}
-                  </dd>
-                </div>
-                <div class="f">
-                  <dt class="f__k">合同编号</dt>
-                  <dd class="f__v mono">{{ detail.contractNo || "—" }}</dd>
-                </div>
-              </dl>
-
-              <form v-else-if="billingForm" class="grid grid--3 grid--edit">
-                <div class="f">
-                  <label class="f__k">计费方式</label>
-                  <el-select v-model="billingForm.billingType">
-                    <el-option
-                      v-for="item in billingTypeOptions"
-                      :key="item.value"
-                      :label="item.label"
-                      :value="item.value"
-                    />
-                  </el-select>
-                </div>
-                <div class="f">
-                  <label class="f__k">默认单价（元/次）</label>
-                  <el-input-number
-                    v-model="billingForm.unitPrice"
-                    :min="0"
-                    :precision="2"
-                    :step="0.1"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">结算周期</label>
-                  <el-select v-model="billingForm.settleType">
-                    <el-option
-                      v-for="item in settleTypeOptions"
-                      :key="item.value"
-                      :label="item.label"
-                      :value="item.value"
-                    />
-                  </el-select>
-                </div>
-                <div class="f">
-                  <label class="f__k">套餐总量</label>
-                  <el-input-number
-                    v-model="billingForm.quotaTotal"
-                    :min="0"
-                    :step="1000"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">已用额度</label>
-                  <el-input-number
-                    v-model="billingForm.quotaUsed"
-                    :min="0"
-                    :step="100"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">预警阈值（%）</label>
-                  <el-input-number
-                    v-model="billingForm.warnThreshold"
-                    :min="0"
-                    :max="100"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">账户余额（元）</label>
-                  <el-input-number
-                    v-model="billingForm.balance"
-                    :min="0"
-                    :precision="2"
-                    :step="100"
-                    controls-position="right"
-                  />
-                </div>
-                <div class="f">
-                  <label class="f__k">合同编号</label>
-                  <el-input
-                    v-model="billingForm.contractNo"
-                    placeholder="如 HT-2026-0118"
-                  />
-                </div>
-              </form>
-
-              <div v-if="editingTab === 'billing'" class="editbar">
-                <span class="editbar__tip">修改后需保存才会生效</span>
-                <el-button @click="cancelEdit">取消</el-button>
-                <el-button type="primary" @click="saveBilling">保存</el-button>
-              </div>
-            </section>
-          </el-tab-pane>
-
           <!-- ---------------------- 认证与鉴权 ---------------------- -->
           <el-tab-pane name="auth">
-            <template #label><span class="navtab">认证与鉴权</span></template>
+            <template #label
+              ><span class="step"><i>2</i>认证与鉴权</span></template
+            >
             <section class="sec">
               <div class="sec__head">
                 <div>
@@ -967,6 +612,394 @@ async function removeAuth(auth: AuthConfig) {
                 >
                   新增鉴权
                 </el-button>
+              </div>
+            </section>
+          </el-tab-pane>
+
+          <!-- ---------------------- 高级配置（计费 / 流控 / 缓存） ---------------------- -->
+          <el-tab-pane name="advanced">
+            <template #label
+              ><span class="step"><i>3</i>高级配置</span></template
+            >
+            <section class="sec">
+              <div class="sec__head">
+                <div>
+                  <h2 class="sec__title">高级配置</h2>
+                  <p class="sec__hint">
+                    计费、流控与缓存，作用于该合作方下的全部接口
+                  </p>
+                </div>
+                <el-button
+                  v-if="editingTab !== 'advanced'"
+                  text
+                  :icon="EditIcon"
+                  class="sec__edit"
+                  @click="startEditAdvanced"
+                >
+                  编辑
+                </el-button>
+              </div>
+
+              <!-- 计费 -->
+              <div class="sec__sub">
+                <h3 class="sec__sub-title">计费</h3>
+                <div v-if="editingTab !== 'advanced'" class="meter-wrap">
+                  <div class="meter">
+                    <div class="meter__head">
+                      <span>套餐额度使用</span>
+                      <b
+                        class="num"
+                        :class="{
+                          'is-warn':
+                            quotaUsedPercent >= 100 - detail.warnThreshold
+                        }"
+                        >{{ quotaUsedPercent }}%</b
+                      >
+                    </div>
+                    <div class="meter__track">
+                      <i
+                        :style="{ width: `${quotaUsedPercent}%` }"
+                        :class="{
+                          'is-warn':
+                            quotaUsedPercent >= 100 - detail.warnThreshold
+                        }"
+                      />
+                    </div>
+                    <p class="meter__note">
+                      已用 {{ detail.quotaUsed.toLocaleString() }} / 共
+                      {{ detail.quotaTotal.toLocaleString() }}， 低于
+                      {{ detail.warnThreshold }}% 时告警
+                    </p>
+                  </div>
+                </div>
+
+                <dl v-if="editingTab !== 'advanced'" class="grid grid--4">
+                  <div class="f">
+                    <dt class="f__k">计费方式</dt>
+                    <dd class="f__v">
+                      {{
+                        billingTypeOptions.find(
+                          item => item.value === detail.billingType
+                        )?.label
+                      }}
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">默认单价（元/次）</dt>
+                    <dd class="f__v">
+                      <span class="num">{{ detail.unitPrice }}</span>
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">结算周期</dt>
+                    <dd class="f__v">
+                      {{
+                        settleTypeOptions.find(
+                          item => item.value === detail.settleType
+                        )?.label
+                      }}
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">合同编号</dt>
+                    <dd class="f__v">
+                      <span class="mono">{{ detail.contractNo || "—" }}</span>
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">账户余额（元）</dt>
+                    <dd class="f__v">
+                      <span class="num">{{
+                        detail.balance.toLocaleString()
+                      }}</span>
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">套餐总量</dt>
+                    <dd class="f__v">
+                      <span class="num">{{
+                        detail.quotaTotal.toLocaleString()
+                      }}</span>
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">已用额度</dt>
+                    <dd class="f__v">
+                      <span class="num">{{
+                        detail.quotaUsed.toLocaleString()
+                      }}</span>
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">预警阈值（%）</dt>
+                    <dd class="f__v">
+                      <span class="num">{{ detail.warnThreshold }}</span>
+                    </dd>
+                  </div>
+                </dl>
+
+                <form v-else-if="advancedForm" class="grid grid--4 grid--edit">
+                  <div class="f">
+                    <label class="f__k">计费方式</label>
+                    <el-select v-model="advancedForm.billingType">
+                      <el-option
+                        v-for="item in billingTypeOptions"
+                        :key="item.value"
+                        :label="item.label"
+                        :value="item.value"
+                      />
+                    </el-select>
+                  </div>
+                  <div class="f">
+                    <label class="f__k">默认单价（元/次）</label>
+                    <el-input-number
+                      v-model="advancedForm.unitPrice"
+                      :min="0"
+                      :precision="2"
+                      :step="0.1"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">结算周期</label>
+                    <el-select v-model="advancedForm.settleType">
+                      <el-option
+                        v-for="item in settleTypeOptions"
+                        :key="item.value"
+                        :label="item.label"
+                        :value="item.value"
+                      />
+                    </el-select>
+                  </div>
+                  <div class="f">
+                    <label class="f__k">合同编号</label>
+                    <el-input
+                      v-model="advancedForm.contractNo"
+                      placeholder="如 HT-2026-0118"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">账户余额（元）</label>
+                    <el-input-number
+                      v-model="advancedForm.balance"
+                      :min="0"
+                      :precision="2"
+                      :step="100"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">套餐总量</label>
+                    <el-input-number
+                      v-model="advancedForm.quotaTotal"
+                      :min="0"
+                      :step="1000"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">已用额度</label>
+                    <el-input-number
+                      v-model="advancedForm.quotaUsed"
+                      :min="0"
+                      :step="100"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">预警阈值（%）</label>
+                    <el-input-number
+                      v-model="advancedForm.warnThreshold"
+                      :min="0"
+                      :max="100"
+                      controls-position="right"
+                    />
+                  </div>
+                </form>
+              </div>
+
+              <!-- 流控 -->
+              <div class="sec__sub">
+                <h3 class="sec__sub-title">流控</h3>
+                <dl v-if="editingTab !== 'advanced'" class="grid grid--4">
+                  <div class="f">
+                    <dt class="f__k">限流（QPS）</dt>
+                    <dd class="f__v">
+                      <span class="num">{{ detail.qps }}</span>
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">日调用上限（次）</dt>
+                    <dd class="f__v">
+                      <span class="num">{{
+                        detail.dailyLimit.toLocaleString()
+                      }}</span>
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">并发数</dt>
+                    <dd class="f__v">
+                      <span class="num">{{ detail.concurrency }}</span>
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">失败重试（次）</dt>
+                    <dd class="f__v">
+                      <span class="num">{{ detail.retryTimes }}</span>
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">重试间隔（ms）</dt>
+                    <dd class="f__v">
+                      <span class="num">{{ detail.retryInterval }}</span>
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">熔断阈值（次）</dt>
+                    <dd class="f__v">
+                      <span class="num">{{ detail.breakerThreshold }}</span>
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">熔断恢复（分钟）</dt>
+                    <dd class="f__v">
+                      <span class="num">{{ detail.breakerRecoverMin }}</span>
+                    </dd>
+                  </div>
+                  <div class="f">
+                    <dt class="f__k">告警接收人</dt>
+                    <dd class="f__v">
+                      {{ detail.alarmReceiver || "—" }}
+                    </dd>
+                  </div>
+                </dl>
+
+                <form v-else-if="advancedForm" class="grid grid--4 grid--edit">
+                  <div class="f">
+                    <label class="f__k">限流（QPS）</label>
+                    <el-input-number
+                      v-model="advancedForm.qps"
+                      :min="1"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">日调用上限（次）</label>
+                    <el-input-number
+                      v-model="advancedForm.dailyLimit"
+                      :min="0"
+                      :step="1000"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">并发数</label>
+                    <el-input-number
+                      v-model="advancedForm.concurrency"
+                      :min="1"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">失败重试（次）</label>
+                    <el-input-number
+                      v-model="advancedForm.retryTimes"
+                      :min="0"
+                      :max="5"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">重试间隔（ms）</label>
+                    <el-input-number
+                      v-model="advancedForm.retryInterval"
+                      :min="0"
+                      :step="100"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">熔断阈值（次）</label>
+                    <el-input-number
+                      v-model="advancedForm.breakerThreshold"
+                      :min="1"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">熔断恢复（分钟）</label>
+                    <el-input-number
+                      v-model="advancedForm.breakerRecoverMin"
+                      :min="1"
+                      controls-position="right"
+                    />
+                  </div>
+                  <div class="f">
+                    <label class="f__k">告警接收人</label>
+                    <el-input
+                      v-model="advancedForm.alarmReceiver"
+                      placeholder="邮箱或用户名"
+                    />
+                  </div>
+                </form>
+              </div>
+
+              <!-- 缓存 -->
+              <div class="sec__sub">
+                <h3 class="sec__sub-title">缓存</h3>
+                <dl v-if="editingTab !== 'advanced'" class="grid grid--4">
+                  <div class="f f--wide">
+                    <dt class="f__k">结果缓存</dt>
+                    <dd class="f__v">
+                      <template v-if="detail.cacheEnabled">
+                        {{ detail.cacheTtl }}
+                        {{ getCacheUnitLabel(detail.cacheUnit) }}
+                      </template>
+                      <span v-else class="f__note">不缓存</span>
+                    </dd>
+                  </div>
+                </dl>
+
+                <form v-else-if="advancedForm" class="grid grid--4 grid--edit">
+                  <div class="f f--wide">
+                    <label class="f__k">结果缓存</label>
+                    <div class="cache">
+                      <el-switch
+                        v-model="advancedForm.cacheEnabled"
+                        active-text="开启"
+                        inactive-text="关闭"
+                        inline-prompt
+                      />
+                      <el-input-number
+                        v-model="advancedForm.cacheTtl"
+                        :min="1"
+                        :disabled="!advancedForm.cacheEnabled"
+                        :controls="false"
+                        placeholder="时长"
+                      />
+                      <el-select
+                        v-model="advancedForm.cacheUnit"
+                        :disabled="!advancedForm.cacheEnabled"
+                      >
+                        <el-option
+                          v-for="item in cacheUnitOptions"
+                          :key="item.value"
+                          :label="item.label"
+                          :value="item.value"
+                        />
+                      </el-select>
+                    </div>
+                    <span class="f__note">
+                      接口「高级配置」里缓存留空时，按这里的设置生效
+                    </span>
+                  </div>
+                </form>
+              </div>
+
+              <div v-if="editingTab === 'advanced'" class="editbar">
+                <span class="editbar__tip">修改后需保存才会生效</span>
+                <el-button @click="cancelEdit">取消</el-button>
+                <el-button type="primary" @click="saveAdvanced">保存</el-button>
               </div>
             </section>
           </el-tab-pane>
@@ -1146,31 +1179,48 @@ html.dark .pd {
 }
 
 /* ------------------------------- 主体 ------------------------------- */
+/* 与接口配置页（edit.vue 的 .ix-body）同一套骨架：左侧步骤卡片 + 右侧内容卡片 */
 .pd-body {
   margin-top: 12px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  overflow: hidden;
 }
 
 .pd-tabs {
-  :deep(.el-tabs__header) {
-    width: 168px;
+  /* el-tabs 在 left 布局下用 float 分栏，改成 grid 才能两栏对齐 */
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+
+  :deep(.el-tabs__header.is-left) {
+    float: none;
+    width: auto;
     margin: 0;
-    padding: 10px 0;
-    border-right: 1px solid var(--line-soft);
+    padding: 8px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+
+  :deep(.el-tabs__nav-wrap.is-left) {
+    margin-right: 0;
   }
 
   :deep(.el-tabs__nav-wrap::after) {
     display: none;
   }
 
+  // EP 的 left 布局把 item 设成 justify-content: flex-end，标签会被推到右边
+  :deep(.el-tabs__item.is-left) {
+    justify-content: flex-start;
+    width: 100%;
+    text-align: left;
+  }
+
   :deep(.el-tabs__item) {
     position: relative;
-    height: 38px;
-    line-height: 38px;
-    padding: 0 18px 0 20px !important;
+    height: 40px;
+    line-height: 40px;
+    padding: 0 12px !important;
     text-align: left;
     font-size: 13px;
     color: var(--ink-2);
@@ -1213,12 +1263,39 @@ html.dark .pd {
   }
 
   :deep(.el-tabs__content) {
+    float: none;
     padding: 4px 0 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
   }
 }
 
-.navtab {
-  display: block;
+/* 左侧步骤条：序号圆点 + 标题，选中态由 el-tabs__item.is-active 带出 */
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.step i {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-size: 11px;
+  font-style: normal;
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.pd-tabs :deep(.el-tabs__item.is-active) .step i {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
 }
 
 /* ------------------------------- 分区 ------------------------------- */
@@ -1255,6 +1332,19 @@ html.dark .pd {
   font-size: 13px;
 }
 
+/** 高级配置里的三个小节（计费 / 流控 / 缓存） */
+.sec__sub {
+  padding: 16px 0 4px;
+  border-top: 1px dashed var(--line-soft);
+}
+
+.sec__sub-title {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
 /* ------------------------------- 字段网格 ------------------------------- */
 .grid {
   display: grid;
@@ -1267,6 +1357,10 @@ html.dark .pd {
 
   &--3 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  &--4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   &--edit {
@@ -1323,6 +1417,27 @@ html.dark .pd {
 
   :deep(.el-input-number .el-input__inner) {
     text-align: left;
+  }
+}
+
+/** 跨满整行（三列网格里放一组开关 + 时长 + 单位） */
+.f--wide {
+  grid-column: 1 / -1;
+}
+
+.cache {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.grid--edit .f .cache {
+  :deep(.el-input-number) {
+    width: 140px;
+  }
+
+  :deep(.el-select) {
+    width: 110px;
   }
 }
 
@@ -1510,6 +1625,11 @@ html.dark .pd {
   font-size: 12px;
 }
 
+/* 环境地址与接口路径的联动说明 */
+.env-linked {
+  margin-top: 10px;
+}
+
 /* ------------------------------- 原子件 ------------------------------- */
 .dot {
   display: inline-flex;
@@ -1641,7 +1761,8 @@ html.dark .pd {
 }
 
 @media (width <= 1280px) {
-  .grid--3 {
+  .grid--3,
+  .grid--4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1658,12 +1779,13 @@ html.dark .pd {
   }
 
   .grid--2,
-  .grid--3 {
+  .grid--3,
+  .grid--4 {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .pd-tabs :deep(.el-tabs__header) {
-    width: 132px;
+  .pd-tabs {
+    grid-template-columns: 160px minmax(0, 1fr);
   }
 
   .alist__head {

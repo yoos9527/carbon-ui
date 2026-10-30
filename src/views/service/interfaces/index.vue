@@ -486,18 +486,25 @@ onBeforeUnmount(() => {
             <span class="cell-code">{{ row.partnerCode }}</span>
           </template>
           <template #endpoint="{ row }">
-            <span class="mth" :class="`mth--${row.method.toLowerCase()}`">
-              {{ row.method }}
-            </span>
-            <span class="path">{{ row.path }}</span>
-            <button
-              type="button"
-              class="copy"
-              title="复制请求地址"
-              @click.stop="copy(row.path, '请求地址')"
-            >
-              <CopyIcon />
-            </button>
+            <div class="ep">
+              <div class="ep__line">
+                <span class="mth" :class="`mth--${row.method.toLowerCase()}`">
+                  {{ row.method }}
+                </span>
+                <span class="path">{{ row.path }}</span>
+                <button
+                  type="button"
+                  class="copy"
+                  title="复制请求地址"
+                  @click.stop="copy(row.fullUrl || row.path, '请求地址')"
+                >
+                  <CopyIcon />
+                </button>
+              </div>
+              <div v-if="row.fullUrl" class="ep__url" :title="row.fullUrl">
+                {{ row.fullUrl }}
+              </div>
+            </div>
           </template>
           <template #price="{ row }">
             <span class="num">{{ formatPrice(row.price) }}</span>
@@ -726,6 +733,23 @@ onBeforeUnmount(() => {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 12px;
   color: var(--el-text-color-regular);
+}
+
+/* 请求地址：方法徽标 + 路径 + 下方一行「环境地址 + 路径」的完整调用地址 */
+.ep__line {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.ep__url {
+  margin-top: 2px;
+  overflow: hidden;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  color: var(--el-text-color-placeholder);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mth {

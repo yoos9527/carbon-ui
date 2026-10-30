@@ -7,17 +7,22 @@
  * 接后端时只替换本文件的 helper，页面不动。
  */
 import {
+  cacheUnitOptions,
+  checkModeOptions,
   createEmptyInterface,
   fieldTypeOptions,
+  getDefaultEnv,
   getStatusOption,
   methodOptions,
   mockPartners,
   nextId,
   paramLocationOptions,
   payloadFormatOptions,
-  processorOptions,
+  resolveInterfaceUrl,
+  TEMPLATE_PROCESSOR_VALUE,
   type AuthConfig,
   type AuthType,
+  type CacheUnit,
   type FieldType,
   type InterfaceParam,
   type InterfaceResponseField,
@@ -36,6 +41,8 @@ export interface InterfaceRow extends PartnerInterfaceItem {
   partnerStatus: PartnerStatus;
   /** 绑定到的鉴权配置，未绑定为 undefined */
   auth?: AuthConfig;
+  /** 默认环境的完整调用地址（未配置环境地址时为空串） */
+  fullUrl: string;
 }
 
 /** 合作方下拉选项 */
@@ -66,7 +73,8 @@ export function getInterfaceRows(): InterfaceRow[] {
         partnerName: partner.name,
         partnerCode: partner.code,
         partnerStatus: partner.status,
-        auth: (partner.authConfigs ?? []).find(auth => auth.id === item.authId)
+        auth: (partner.authConfigs ?? []).find(auth => auth.id === item.authId),
+        fullUrl: resolveInterfaceUrl(getDefaultEnv(partner)?.baseUrl, item.path)
       });
     });
   });
@@ -119,11 +127,12 @@ export const callStatusOptions = [
 
 /* ------------------------------ 分步表单 ------------------------------ */
 
-/** 三步分别是：请求信息（含调用参数）/ 入参 / 出参 */
+/** 四步：基本信息 / 入参 / 出参 / 高级配置（计费 + 流控 + 缓存） */
 export const formSteps = [
-  { title: "请求信息", desc: "标识、方法、路径与调用参数" },
+  { title: "基本信息", desc: "标识、方法、路径与处理器" },
   { title: "请求入参", desc: "字段定义与位置" },
-  { title: "响应出参", desc: "返回字段与层级路径" }
+  { title: "响应出参", desc: "返回字段与层级路径" },
+  { title: "高级配置", desc: "计费、流控与缓存" }
 ] as const;
 
 /** 编辑页表单值：合作方只读，其余可改 */
@@ -137,12 +146,31 @@ export interface InterfaceForm {
   method: PartnerInterfaceItem["method"];
   payloadFormat: PartnerInterfaceItem["payloadFormat"];
   preProcessor: ProcessorType;
+  /** 内联解析模板，仅前置处理器为 template 时使用 */
+  preTemplate: string;
+  /** 引用的前置解析器，仅前置处理器为 parser 时使用 */
+  preParserId: number | undefined;
   postProcessor: ProcessorType;
+  /** 内联响应映射模板，仅后置处理器为 template 时使用 */
+  postTemplate: string;
+  /** 引用的后置解析器，仅后置处理器为 parser 时使用 */
+  postParserId: number | undefined;
   authId: number | undefined;
   /** 留空表示沿用合作方的连接超时 */
   timeout: number | undefined;
   price: number;
   dailyLimit: number | undefined;
+  /** 以下六项留空表示沿用合作方默认值 */
+  qps: number | undefined;
+  concurrency: number | undefined;
+  retryTimes: number | undefined;
+  retryInterval: number | undefined;
+  breakerThreshold: number | undefined;
+  breakerRecoverMin: number | undefined;
+  /** 缓存开关与时长（秒） */
+  cacheEnabled: boolean;
+  cacheTtl: number | undefined;
+  cacheUnit: CacheUnit;
   enabled: boolean;
   params: InterfaceParam[];
   responses: InterfaceResponseField[];
@@ -157,12 +185,25 @@ export function toForm(row: InterfaceRow): InterfaceForm {
     path: row.path,
     method: row.method,
     payloadFormat: row.payloadFormat,
-    preProcessor: row.preProcessor ?? "none",
-    postProcessor: row.postProcessor ?? "none",
+    preProcessor: row.preProcessor ?? "template",
+    preTemplate: row.preTemplate ?? "",
+    preParserId: row.preParserId,
+    postProcessor: row.postProcessor ?? "template",
+    postTemplate: row.postTemplate ?? "",
+    postParserId: row.postParserId,
     authId: row.authId,
     timeout: row.timeout,
     price: row.price,
     dailyLimit: row.dailyLimit,
+    qps: row.qps,
+    concurrency: row.concurrency,
+    retryTimes: row.retryTimes,
+    retryInterval: row.retryInterval,
+    breakerThreshold: row.breakerThreshold,
+    breakerRecoverMin: row.breakerRecoverMin,
+    cacheEnabled: row.cacheEnabled ?? false,
+    cacheTtl: row.cacheTtl,
+    cacheUnit: row.cacheUnit ?? "minute",
     enabled: row.enabled,
     params: (row.params ?? []).map(item => ({ ...item })),
     responses: (row.responses ?? []).map(item => ({ ...item }))
@@ -178,12 +219,26 @@ export function createForm(partnerId: number): InterfaceForm {
     path: "",
     method: "GET",
     payloadFormat: "json",
-    preProcessor: "none",
-    postProcessor: "none",
+    // 默认走写死的「模板解析器」：新建时先能写内联模板，需要复用再改成引用解析器
+    preProcessor: TEMPLATE_PROCESSOR_VALUE,
+    preTemplate: "",
+    preParserId: undefined,
+    postProcessor: TEMPLATE_PROCESSOR_VALUE,
+    postTemplate: "",
+    postParserId: undefined,
     authId: undefined,
     timeout: undefined,
     price: 0,
     dailyLimit: undefined,
+    qps: undefined,
+    concurrency: undefined,
+    retryTimes: undefined,
+    retryInterval: undefined,
+    breakerThreshold: undefined,
+    breakerRecoverMin: undefined,
+    cacheEnabled: false,
+    cacheTtl: undefined,
+    cacheUnit: "minute",
     enabled: true,
     params: [],
     responses: []
@@ -195,13 +250,13 @@ export function createForm(partnerId: number): InterfaceForm {
  * 而不是弹一个「请检查表单」了事。
  */
 export interface FormError {
-  /** 1 / 2 / 3 */
+  /** 1–6 步里的哪一步 */
   step: number;
-  /** 第一步出错的字段名 */
+  /** 标量字段出错的字段名 */
   field?: keyof InterfaceForm;
-  /** 第二、三步出错的行下标 */
+  /** 入参 / 出参表出错的行下标 */
   rowIndex?: number;
-  /** 第二、三步出错的列 */
+  /** 入参 / 出参表出错的列 */
   column?: string;
   message: string;
 }
@@ -282,13 +337,12 @@ function isEmptyResponse(row: InterfaceResponseField): boolean {
     row.name.trim() ||
     row.path.trim() ||
     row.desc?.trim() ||
-    row.example?.trim() ||
     row.type !== "string" ||
-    row.required
+    row.checkMode
   );
 }
 
-/** 校验单个步骤，通过返回 null */
+/** 校验单个步骤（1–6），通过返回 null */
 export function validateStep(
   step: number,
   form: InterfaceForm
@@ -307,7 +361,11 @@ export function validateStep(
       };
     }
     if (isCodeTaken(code, form.id)) {
-      return { step: 1, field: "code", message: `接口标识 ${code} 已被占用` };
+      return {
+        step: 1,
+        field: "code",
+        message: "接口标识 " + code + " 已被占用"
+      };
     }
     if (!form.path.trim()) {
       return { step: 1, field: "path", message: "请填写请求路径" };
@@ -315,13 +373,31 @@ export function validateStep(
     if (!form.path.trim().startsWith("/")) {
       return { step: 1, field: "path", message: "请求路径需以 / 开头" };
     }
-    if (Number.isNaN(form.price) || form.price < 0) {
-      return { step: 1, field: "price", message: "单价不能为负" };
+    if (form.preProcessor === "parser" && !form.preParserId) {
+      return {
+        step: 1,
+        field: "preProcessor",
+        message: "请选择要引用的前置解析器"
+      };
+    }
+    if (form.postProcessor === "parser" && !form.postParserId) {
+      return {
+        step: 1,
+        field: "postProcessor",
+        message: "请选择要引用的后置解析器"
+      };
     }
     return null;
   }
 
   if (step === 2) {
+    if (form.preProcessor === "template" && !form.preTemplate.trim()) {
+      return {
+        step: 2,
+        field: "preTemplate",
+        message: "选择模板解析器时，需填写解析模板"
+      };
+    }
     const rows = form.params.filter(item => !isEmptyParam(item));
     const names = new Set<string>();
     for (let index = 0; index < form.params.length; index += 1) {
@@ -333,7 +409,7 @@ export function validateStep(
           step: 2,
           rowIndex: index,
           column: "name",
-          message: `第 ${rows.indexOf(row) + 1} 行入参缺少参数名`
+          message: "第 " + (rows.indexOf(row) + 1) + " 行入参缺少参数名"
         };
       }
       if (names.has(name.toLowerCase())) {
@@ -341,7 +417,7 @@ export function validateStep(
           step: 2,
           rowIndex: index,
           column: "name",
-          message: `入参「${name}」重复`
+          message: "入参「" + name + "」重复"
         };
       }
       names.add(name.toLowerCase());
@@ -351,53 +427,125 @@ export function validateStep(
           step: 2,
           rowIndex: index,
           column: "defaultValue",
-          message: `入参「${name}」的默认值${valueError}`
+          message: "入参「" + name + "」的默认值" + valueError
         };
       }
     }
     return null;
   }
 
-  const responses = form.responses.filter(item => !isEmptyResponse(item));
-  const paths = new Set<string>();
-  for (let index = 0; index < form.responses.length; index += 1) {
-    const row = form.responses[index];
-    if (isEmptyResponse(row)) continue;
-    const path = row.path.trim();
-    if (!path) {
+  if (step === 3) {
+    if (form.postProcessor === "template" && !form.postTemplate.trim()) {
       return {
         step: 3,
-        rowIndex: index,
-        column: "path",
-        message: `第 ${responses.indexOf(row) + 1} 行出参缺少路径`
+        field: "postTemplate",
+        message: "选择模板解析器时，需填写响应映射模板"
       };
     }
-    if (!PATH_RE.test(path)) {
-      return {
-        step: 3,
-        rowIndex: index,
-        column: "path",
-        message: `出参路径「${path}」格式不对，应形如 data.list[].name`
-      };
+    const responses = form.responses.filter(item => !isEmptyResponse(item));
+    const paths = new Set<string>();
+    for (let index = 0; index < form.responses.length; index += 1) {
+      const row = form.responses[index];
+      if (isEmptyResponse(row)) continue;
+      const path = row.path.trim();
+      if (!path) {
+        return {
+          step: 3,
+          rowIndex: index,
+          column: "path",
+          message: "第 " + (responses.indexOf(row) + 1) + " 行出参缺少路径"
+        };
+      }
+      if (!PATH_RE.test(path)) {
+        return {
+          step: 3,
+          rowIndex: index,
+          column: "path",
+          message: "出参路径「" + path + "」格式不对，应形如 data.list[].name"
+        };
+      }
+      if (paths.has(path)) {
+        return {
+          step: 3,
+          rowIndex: index,
+          column: "path",
+          message: "出参路径「" + path + "」重复"
+        };
+      }
+      paths.add(path);
+      if (row.checkMode === "value" && !row.checkValue?.trim()) {
+        return {
+          step: 3,
+          rowIndex: index,
+          column: "checkValue",
+          message: "查得字段选了「取值」，需填写期望值（如 200）"
+        };
+      }
     }
-    if (paths.has(path)) {
-      return {
-        step: 3,
-        rowIndex: index,
-        column: "path",
-        message: `出参路径「${path}」重复`
-      };
-    }
-    paths.add(path);
+    return null;
   }
+
+  if (step === 4) {
+    if (Number.isNaN(form.price) || form.price < 0) {
+      return { step: 4, field: "price", message: "单价不能为负" };
+    }
+    if (form.dailyLimit !== undefined && form.dailyLimit < 0) {
+      return { step: 4, field: "dailyLimit", message: "日上限不能为负" };
+    }
+    if (form.timeout !== undefined && form.timeout <= 0) {
+      return { step: 4, field: "timeout", message: "超时需大于 0 毫秒" };
+    }
+    const numeric: { field: keyof InterfaceForm; label: string }[] = [
+      { field: "qps", label: "QPS 上限" },
+      { field: "concurrency", label: "并发上限" },
+      { field: "retryTimes", label: "重试次数" },
+      { field: "retryInterval", label: "重试间隔" },
+      { field: "breakerThreshold", label: "熔断失败阈值" },
+      { field: "breakerRecoverMin", label: "熔断恢复时长" }
+    ];
+    for (const item of numeric) {
+      const value = form[item.field] as number | undefined;
+      if (value === undefined) continue;
+      if (Number.isNaN(value) || value < 0) {
+        return { step: 4, field: item.field, message: item.label + "不能为负" };
+      }
+    }
+    if (
+      form.retryTimes !== undefined &&
+      form.retryTimes > 0 &&
+      !form.retryInterval
+    ) {
+      return {
+        step: 4,
+        field: "retryInterval",
+        message: "设置了重试次数，请顺手填上重试间隔（毫秒）"
+      };
+    }
+    if (form.cacheEnabled) {
+      if (form.cacheTtl === undefined || Number.isNaN(form.cacheTtl)) {
+        return {
+          step: 4,
+          field: "cacheTtl",
+          message: "启用缓存时，需填写缓存时长"
+        };
+      }
+      if (form.cacheTtl <= 0) {
+        return { step: 4, field: "cacheTtl", message: "缓存时长需大于 0" };
+      }
+    }
+    return null;
+  }
+
   return null;
 }
 
 /** 保存前整体校验：按步骤顺序返回第一条错误 */
 export function validateAll(form: InterfaceForm): FormError | null {
-  return (
-    validateStep(1, form) ?? validateStep(2, form) ?? validateStep(3, form)
-  );
+  for (let index = 1; index <= formSteps.length; index += 1) {
+    const result = validateStep(index, form);
+    if (result) return result;
+  }
+  return null;
 }
 
 /** 写回 `mockPartners` 对应接口，返回是否命中 */
@@ -423,11 +571,27 @@ export function saveInterfaceForm(form: InterfaceForm): boolean {
     method: form.method,
     payloadFormat: form.payloadFormat,
     preProcessor: form.preProcessor,
+    preTemplate:
+      form.preProcessor === "template" ? form.preTemplate.trim() : undefined,
+    preParserId: form.preProcessor === "parser" ? form.preParserId : undefined,
     postProcessor: form.postProcessor,
+    postTemplate:
+      form.postProcessor === "template" ? form.postTemplate.trim() : undefined,
+    postParserId:
+      form.postProcessor === "parser" ? form.postParserId : undefined,
     authId: form.authId,
     timeout: form.timeout,
     price: form.price,
     dailyLimit: form.dailyLimit,
+    qps: form.qps,
+    concurrency: form.concurrency,
+    retryTimes: form.retryTimes,
+    retryInterval: form.retryInterval,
+    breakerThreshold: form.breakerThreshold,
+    breakerRecoverMin: form.breakerRecoverMin,
+    cacheEnabled: form.cacheEnabled,
+    cacheTtl: form.cacheTtl,
+    cacheUnit: form.cacheUnit,
     enabled: form.enabled,
     params: form.params
       .filter(item => !isEmptyParam(item))
@@ -444,7 +608,9 @@ export function saveInterfaceForm(form: InterfaceForm): boolean {
         name: item.name.trim(),
         path: item.path.trim(),
         desc: item.desc?.trim(),
-        example: item.example?.trim()
+        checkMode: item.checkMode,
+        checkValue:
+          item.checkMode === "value" ? item.checkValue?.trim() : undefined
       }))
   });
   return true;
@@ -479,20 +645,23 @@ export function getPartnerStatusLabel(status: PartnerStatus): string {
 
 export type {
   AuthType,
+  CacheUnit,
   FieldType,
   InterfaceParam,
   InterfaceResponseField,
   KV,
   ParamLocation,
-  PartnerInterfaceItem,
-  ProcessorType
+  PartnerInterfaceItem
 };
 export {
+  cacheUnitOptions,
+  checkModeOptions,
   fieldTypeOptions,
+  getDefaultEnv,
   methodOptions,
   paramLocationOptions,
   payloadFormatOptions,
-  processorOptions
+  resolveInterfaceUrl
 };
 
 /** 批量删除，返回实际删除条数 */

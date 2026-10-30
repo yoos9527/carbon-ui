@@ -15,17 +15,20 @@ tags: [architecture]
 
 # 模块边界
 
-四个模块，一张不画成 DAG 的关系表（原因见下一节）：
+六个模块，一张不画成 DAG 的关系表（原因见下一节）：
 
-| 模块 | 拥有 | 规格 |
-| --- | --- | --- |
-| 骨架运行时 | `src/router`、`src/layout`、`src/store`、`src/utils/{auth,http}`、`src/api`、`src/views/login` | [[skeleton-runtime]] |
-| 合作方接入档案 | `src/views/service/partners` | [[partners-integration]] |
-| 接口管理 | `src/views/service/interfaces` | [[interface-config]] |
-| 通用 UI 层 | `src/components`、`src/directives`、`src/plugins` | [[shared-ui]] |
-| 工程管道 | `build/`、`vite.config.ts`、`.env*`、`pnpm-workspace.yaml`、`public/platform-config.json` | [[build-pipeline]] |
+| 模块           | 拥有                                                                                           | 规格                     |
+| -------------- | ---------------------------------------------------------------------------------------------- | ------------------------ |
+| 骨架运行时     | `src/router`、`src/layout`、`src/store`、`src/utils/{auth,http}`、`src/api`、`src/views/login` | [[skeleton-runtime]]     |
+| 合作方接入档案 | `src/views/service/partners`                                                                   | [[partners-integration]] |
+| 接口管理       | `src/views/service/interfaces`                                                                 | [[interface-config]]     |
+| 解析器库       | `src/views/service/parsers`                                                                    | [[parser-library]]       |
+| 通用 UI 层     | `src/components`、`src/directives`、`src/plugins`                                              | [[shared-ui]]            |
+| 工程管道       | `build/`、`vite.config.ts`、`.env*`、`pnpm-workspace.yaml`、`public/platform-config.json`      | [[build-pipeline]]       |
 
 唯一干净的单向依赖是 **合作方档案 → 通用 UI 层**（用 `PureTableBar`、`~icons/*`）。业务域不 import 骨架内部实现，只用 `useRouter` / `useRoute` 做跳转与取参。
+
+业务域内部还有一条单向依赖：**接口管理 → 解析器库**（接口只存 `preParserId` / `postParserId` 引用，不复制代码；`parsers/data.ts` import `mockPartners` 只为算引用计数，是只读扫描）。所以改解析器不会动接口数据，但**删被引用的解析器会被拦住**（见 [[parser-library]]）。
 
 骨架运行时之所以是**一个**模块而不是「路由 / 外壳 / 会话」三块：这三块互相 import 成环，按依赖方向切会切出三个都必须声明「我也依赖另外两个」的规格。具体环：`src/router/index.ts` 用 `useMultiTagsStoreHook` 与 `routerArrays`（外壳）→ `src/store/modules/user.ts` 调 `resetRouter`（路由）与 `handleTags`（外壳）→ `src/layout/hooks/useNav.ts` 反过来用 `remainingPaths`、`useUserStoreHook`。**它们是一块，规格就写一块**；拆开只会造出假的 DAG。
 

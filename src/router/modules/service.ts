@@ -30,6 +30,16 @@ export default {
         title: "接口管理",
         showParent: true
       }
+    },
+    {
+      path: "/service/parsers",
+      name: "ServiceParsers",
+      component: () => import("@/views/service/parsers/index.vue"),
+      meta: {
+        icon: "ri/code-box-line",
+        title: "解析器",
+        showParent: true
+      }
     }
   ]
 } satisfies RouteConfigsTable;
