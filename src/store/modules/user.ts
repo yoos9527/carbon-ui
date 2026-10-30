@@ -91,9 +91,11 @@ export const useUserStore = defineStore("pure-user", {
       return new Promise<RefreshTokenResult>((resolve, reject) => {
         refreshTokenApi(data)
           .then(data => {
-            if (data) {
+            if (data?.success && data.data) {
               setToken(data.data);
               resolve(data);
+            } else {
+              reject(new Error("刷新登录状态失败"));
             }
           })
           .catch(error => {
